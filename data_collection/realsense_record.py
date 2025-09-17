@@ -214,4 +214,4 @@ if __name__ == '__main__':
         cameras.cleanup()
         cv2.destroyAllWindows()
 
-# python script.py --real-time-view --rgb-width 1280 --rgb-height 720 --fps 30 --save-path ./data
+# python realsense_record.py --real-time-view --rgb-width 1280 --rgb-height 720 --fps 30 --save-path ./data

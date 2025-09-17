@@ -155,4 +155,4 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Main process error: {e}")
 
-# python quest_teleop.py --receiver-port 10001 --sender-ip 192.168.2.250 --sender-port 10004 --sleep-interval 0.02
+# python quest_receive.py --receiver-port 10001 --sender-ip 192.168.2.250 --sender-port 10004 --sleep-interval 0.02
