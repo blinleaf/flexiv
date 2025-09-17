@@ -6,6 +6,7 @@ import argparse
 import logging
 import quaternion
 import numpy as np
+import spdlog
 from typing import Tuple, Optional, Dict
 
 
@@ -23,7 +24,7 @@ class QuestTeleop:
 
         # Set up logging
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        self.logger = logging.getLogger(__name__)
+        self.logger = spdlog.ConsoleLogger("Quest Teleop")
 
         # Start threads
         self._start_threads()

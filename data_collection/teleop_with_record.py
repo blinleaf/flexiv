@@ -133,7 +133,7 @@ class TrajectoryRecorder:
     def save_trajectory(self, task):
         """Save trajectory data to HDF5 file, compressing camera images"""
         self.align_frames()
-        logger.info(f"Saving trajectory to {self.output_file}...")
+        self.logger.info(f"Saving trajectory to {self.output_file}...")
 
         with h5py.File(self.output_file, 'w') as hf:
             # Store scalar data without compression
@@ -211,7 +211,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         # RDK Initialization
         robot = flexivrdk.Robot("Rizon 4s-063034")
         if robot.fault():
-            logger.warning("Fault on robot server, trying to clear...")
+            logger.warn("Fault on robot server, trying to clear...")
             robot.ClearFault()
             time.sleep(2)
             if robot.fault():
@@ -226,7 +226,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
             time.sleep(1)
             seconds_waited += 1
             if seconds_waited == 10:
-                logger.warning("Robot not operational, check: 1) no fault, 2) in Auto (remote) mode")
+                logger.warn("Robot not operational, check: 1) no fault, 2) in Auto (remote) mode")
                 return
         logger.info("Robot operational")
         
@@ -244,7 +244,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
 
         robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
-        logger.warning(
+        logger.warn(
             "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
         )
         while not robot.primitive_states()["terminated"]:
