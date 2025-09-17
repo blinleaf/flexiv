@@ -329,7 +329,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         while robot.busy():
             time.sleep(0.02)
 
-        recorder.cameras.cleanup()  # 确保相机资源释放
+        recorder.cameras.cleanup()
         recorder.save_trajectory(task)
         logging.info(f"Trajectory saved to {recorder.output_file}")
 
