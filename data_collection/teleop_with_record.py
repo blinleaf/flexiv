@@ -16,7 +16,7 @@ import spdlog
 from datetime import datetime
 
 # Import utility methods
-from utility import quat2eulerZYX, parse_pt_states, list2str
+from utility import quat2eulerZYX, list2str
 
 # Import Flexiv RDK python libraries
 import flexivrdk
@@ -186,7 +186,7 @@ def get_cur_pose(robot, gripper):
 
 def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path="./data"):
     """Main function for teleoperation with recording"""
-    logger = spdlog.ConsoleLogger("Example")
+    logger = spdlog.ConsoleLogger("Main")
     logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
 
     mode = flexivrdk.Mode
