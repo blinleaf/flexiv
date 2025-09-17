@@ -10,7 +10,7 @@ from typing import Tuple, Optional, Dict
 
 
 class QuestTeleop:
-    def __init__(self, receiver_port: int, sender_ip: str, sender_port: int, sleep_interval: float):
+    def __init__(self, receiver_port: int = 101, sender_ip: str = "192.168.2.255", sender_port: int = 100, sleep_interval: float = 0.02):
         """Initialize QuestTeleop with configurable parameters."""
         self.last_input: Optional[Dict] = None
         self.joint_states: np.ndarray = np.array([0.0] * 8)
