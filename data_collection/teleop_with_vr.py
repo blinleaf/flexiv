@@ -187,7 +187,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency, rgb_width=480, rgb_height=640, fps=30, save_path="./data"):
+def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path="./data"):
     """Main function for teleoperation with recording"""
     logging.basicConfig(level=logging.INFO, 
                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -339,10 +339,10 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="./teleop_recordings/", help="Path to save recordings")
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
-    parser.add_argument("--rgb-width", type=int, default=480, help="RGB image width")
-    parser.add_argument("--rgb-height", type=int, default=640, help="RGB image height")
+    parser.add_argument("--rgb_width", type=int, default=640, help="RGB image width")
+    parser.add_argument("--rgb_height", type=int, default=480, help="RGB image height")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second")
-    parser.add_argument("--save-path", type=str, default="./data", help="Path to save RGB-D data")
+    parser.add_argument("--save_path", type=str, default="./data", help="Path to save RGB-D data")
     args = parser.parse_args()
     main(task=args.task, path=args.path, frequency=args.frequency, 
          rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps, save_path=args.save_path)
