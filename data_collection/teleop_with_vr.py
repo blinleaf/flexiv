@@ -24,10 +24,11 @@ import quaternion
 from quest_receive import quest_teleop
 
 # Import Realsense python libraries
-from realsense_record import RealSenseModule, get_rgbd
+from realsense_record import RealSenseModule, get_rgbd, CameraConfig
+
 
 class TrajectoryRecorder:
-    def __init__(self, output_file):
+    def __init__(self, output_file, camera_config=None):
         self.timestamps = []
         self.q_list = []
         self.theta_list = []
@@ -46,13 +47,17 @@ class TrajectoryRecorder:
         self.f_ext_tcp_frame_list = []
         self.f_ext_base_frame_list = []
         self.gripper_width_list = []
-        self.wrist_image_list = []
-        self.image_list = []
+        self.camera_images_list = {}  # Dictionary to store images from multiple cameras
         self.action_list = []
 
         self.output_file = output_file
         self.is_recording = True
-        self.cameras = RealSenseModule()
+        # Initialize RealSenseModule
+        self.cameras = RealSenseModule(camera_config)
+        # Initialize lists for each camera
+        self.num_cameras = len(self.cameras.cameras) if hasattr(self.cameras, 'cameras') else 1
+        for i in range(self.num_cameras):
+            self.camera_images_list[f'cam{i+1}'] = []
 
     def add_state(self, robot_states, gripper_states, quest_input=None):
         """Add state data for one timestep"""
@@ -79,9 +84,9 @@ class TrajectoryRecorder:
             self.f_ext_base_frame_list.append([float(i) for i in robot_states.extWrenchInBase])
             self.gripper_width_list.append(float(gripper_states.width))
 
-            image, _, _, wrist_image, _, _ = get_rgbd(self.cameras)
-            self.wrist_image_list.append(np.array(wrist_image, copy=True))
-            self.image_list.append(np.array(image, copy=True))
+            camera_data = get_rgbd(self.cameras)
+            for i, (image, _, _) in enumerate(camera_data):
+                self.camera_images_list[f'cam{i+1}'].append(np.array(image, copy=True))
 
         except KeyboardInterrupt:
             raise
@@ -102,28 +107,30 @@ class TrajectoryRecorder:
         """Align all data arrays to the same length"""
         min_length = min(len(self.timestamps), 
                         len(self.action_list) + 1, 
-                        len(self.image_list) + 1, 
-                        len(self.wrist_image_list) + 1)
+                        *[len(self.camera_images_list[f'cam{i+1}']) + 1 for i in range(self.num_cameras)])
         
         if len(self.action_list) < min_length:
             self.action_list.append(self.action_list[-1])
-        if len(self.image_list) < min_length:
-            self.image_list.append(self.image_list[-1])
-        if len(self.wrist_image_list) < min_length:
-            self.wrist_image_list.append(self.wrist_image_list[-1])
+        
+        for cam_name in self.camera_images_list:
+            if len(self.camera_images_list[cam_name]) < min_length:
+                self.camera_images_list[cam_name].append(self.camera_images_list[cam_name][-1])
 
-        for attr in ['timestamps', 'action_list', 'image_list', 'wrist_image_list']:
+        for attr in ['timestamps', 'action_list']:
             setattr(self, attr, getattr(self, attr)[:min_length])
+
+        for cam_name in self.camera_images_list:
+            self.camera_images_list[cam_name] = self.camera_images_list[cam_name][:min_length]
 
         assert len(self.action_list) == len(self.timestamps), \
             f"Action length ({len(self.action_list)}) doesn't match timestamps ({len(self.timestamps)})"
-        assert len(self.image_list) == len(self.timestamps), \
-            f"Image length ({len(self.image_list)}) doesn't match timestamps ({len(self.timestamps)})"
-        assert len(self.wrist_image_list) == len(self.timestamps), \
-            f"Wrist image length ({len(self.wrist_image_list)}) doesn't match timestamps ({len(self.timestamps)})"
+        for i in range(self.num_cameras):
+            cam_name = f'cam{i+1}'
+            assert len(self.camera_images_list[cam_name]) == len(self.timestamps), \
+                f"{cam_name} image length ({len(self.camera_images_list[cam_name])}) doesn't match timestamps ({len(self.timestamps)})"
 
     def save_trajectory(self, task):
-        """Save trajectory data to HDF5 file, compressing only images"""
+        """Save trajectory data to HDF5 file, compressing camera images"""
         self.align_frames()
         logging.info(f"Saving trajectory to {self.output_file}...")
 
@@ -149,22 +156,21 @@ class TrajectoryRecorder:
             hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list))
             hf.create_dataset('action', data=np.array(self.action_list))
 
-            # Store image data with compression
-            wrist_images = np.array(self.wrist_image_list)
-            images = np.array(self.image_list)
-            hf.create_dataset('wrist_image', data=wrist_images, 
-                           compression='gzip', compression_opts=9,
-                           chunks=(1, wrist_images.shape[1], wrist_images.shape[2], wrist_images.shape[3]))
-            hf.create_dataset('image', data=images, 
-                           compression='gzip', compression_opts=9,
-                           chunks=(1, images.shape[1], images.shape[2], images.shape[3]))
+            # Store image data with compression for each camera
+            for i in range(self.num_cameras):
+                cam_name = f'cam{i+1}'
+                images = np.array(self.camera_images_list[cam_name])
+                hf.create_dataset(cam_name, data=images, 
+                               compression='gzip', compression_opts=9,
+                               chunks=(1, images.shape[1], images.shape[2], images.shape[3]))
+                # Store image shape as attribute
+                hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
 
             # Store metadata
             hf.attrs['instruction'] = task
             hf.attrs['num_frames'] = len(self.timestamps)
             hf.attrs['creation_date'] = time.strftime("%Y-%m-%d %H:%M:%S")
-            hf.attrs['image_shape'] = str(images.shape[1:])
-            hf.attrs['wrist_image_shape'] = str(wrist_images.shape[1:])
+            hf.attrs['num_cameras'] = self.num_cameras
 
         logging.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
 
@@ -181,7 +187,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency):
+def main(task, path, frequency, rgb_width=480, rgb_height=640, fps=30, save_path="./data"):
     """Main function for teleoperation with recording"""
     logging.basicConfig(level=logging.INFO, 
                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -192,7 +198,18 @@ def main(task, path, frequency):
     os.makedirs(path, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = os.path.join(path, f"trajectory_{timestamp}.h5")
-    recorder = TrajectoryRecorder(output_file)
+    
+    # Initialize CameraConfig
+    camera_config = CameraConfig(
+        real_time_view=True,
+        rgb_size=(rgb_width, rgb_height),
+        depth_size=(rgb_width, rgb_height),
+        fps=fps,
+        save_path=save_path,
+        save_freq=frequency
+    )
+    
+    recorder = TrajectoryRecorder(output_file, camera_config)
     quest_controller = quest_teleop()
 
     try:
@@ -312,13 +329,20 @@ def main(task, path, frequency):
         while robot.busy():
             time.sleep(0.01)
 
+        recorder.cameras.cleanup()  # 确保相机资源释放
         recorder.save_trajectory(task)
         logging.info(f"Trajectory saved to {recorder.output_file}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Teleoperation with trajectory recording")
     parser.add_argument("--path", type=str, default="./teleop_recordings/", help="Path to save recordings")
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
+    parser.add_argument("--rgb-width", type=int, default=480, help="RGB image width")
+    parser.add_argument("--rgb-height", type=int, default=640, help="RGB image height")
+    parser.add_argument("--fps", type=int, default=30, help="Frames per second")
+    parser.add_argument("--save-path", type=str, default="./data", help="Path to save RGB-D data")
     args = parser.parse_args()
-    main(task=args.task, path=args.path, frequency=args.frequency)
+    main(task=args.task, path=args.path, frequency=args.frequency, 
+         rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps, save_path=args.save_path)

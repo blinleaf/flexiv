@@ -47,7 +47,9 @@ class AppState:
         return self.translation + np.array((0, 0, self.distance), dtype=np.float32)
 
 class RealSenseModule:
-    def __init__(self, config: CameraConfig):
+    def __init__(self, config: CameraConfig = None):
+        if config is None:
+            config = CameraConfig()  # 使用默认配置
         self.config = config
         self.state = AppState()
         self.pipelines = []
@@ -138,9 +140,15 @@ class RealSenseModule:
     def cleanup(self):
         """Clean up resources"""
         for pipeline in self.pipelines:
-            pipeline.stop()
+            try:
+                pipeline.stop()
+            except Exception as e:
+                print(f"Error stopping pipeline: {e}")
         if self.config.real_time_view:
-            cv2.destroyAllWindows()
+            try:
+                cv2.destroyAllWindows()
+            except Exception as e:
+                print(f"Error closing windows: {e}")
 
 def save_rgbd_seqs(rs_module: RealSenseModule, config: CameraConfig):
     """Save RGB-D sequences from all cameras"""
