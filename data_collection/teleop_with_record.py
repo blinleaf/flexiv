@@ -80,7 +80,7 @@ class TrajectoryRecorder:
             self.flange_pose_list.append([float(i) for i in robot_states.flange_pose])
             self.ft_sensor_raw_list.append([float(i) for i in robot_states.ft_sensor_raw])
             self.f_ext_tcp_frame_list.append([float(i) for i in robot_states.ext_wrench_in_tcp])
-            self.f_ext_base_frame_list.append([float(i) for i in robot_states.ext_wrench_in_base])
+            self.f_ext_base_frame_list.append([float(i) for i in robot_states.ext_wrench_in_world])
             self.gripper_width_list.append(float(gripper_states.width))
 
             camera_data = get_rgbd(self.cameras)
