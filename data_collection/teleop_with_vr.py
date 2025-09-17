@@ -21,7 +21,7 @@ from utility import quat2eulerZYX, parse_pt_states, list2str
 # Import Flexiv RDK python libraries
 import flexivrdk
 import quaternion
-from quest_receive import quest_teleop
+from quest_receive import QuestTeleop
 
 # Import Realsense python libraries
 from realsense_record import RealSenseModule, get_rgbd, CameraConfig
