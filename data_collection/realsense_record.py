@@ -4,14 +4,28 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 import time
+import argparse
+from typing import Tuple, List, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class CameraConfig:
+    """Configuration parameters for the camera setup"""
+    real_time_view: bool = False
+    rgb_size: Tuple[int, int] = (640, 480)
+    depth_size: Tuple[int, int] = (640, 480)
+    fps: int = 30
+    save_path: str = './force_feedback/replay_data/1/rgbd'
+    saving_freq: int = 10
 
 class AppState:
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         self.WIN_NAME = 'RealSense'
         self.pitch, self.yaw = math.radians(-10), math.radians(-15)
         self.translation = np.array([0, 0, -1], dtype=np.float32)
         self.distance = 2
-        self.prev_mouse = 0, 0
+        self.prev_mouse = (0, 0)
         self.mouse_btns = [False, False, False]
         self.paused = False
         self.decimate = 1
@@ -33,129 +47,171 @@ class AppState:
         return self.translation + np.array((0, 0, self.distance), dtype=np.float32)
 
 class RealSenseModule:
-    def __init__(self, real_time_view=False, rgb_size=[640, 480]):
+    def __init__(self, config: CameraConfig):
+        self.config = config
         self.state = AppState()
-
-        # Create a pipeline instance
-        self.pipeline = rs.pipeline()
-
-        # Configure camera
-        self.config = rs.config()
-
-        # Get connected devices
+        self.pipelines = []
+        self.profiles = []
+        self.depth_scales = []
         self.ctx = rs.context()
         self.devices = list(self.ctx.query_devices())
+        self.serial_numbers = [device.get_info(rs.camera_info.serial_number) for device in self.devices]
+        
+        if not self.devices:
+            raise RuntimeError("No RealSense cameras detected")
 
-        if len(self.devices) < 1:
-            raise RuntimeError("No RealSense camera detected")
+        # Initialize pipelines for all detected cameras
+        self._setup_pipelines()
 
-        # Get camera serial number
-        self.serial = self.devices[0].get_info(rs.camera_info.serial_number)
-
-        # Configure camera
-        self.config.enable_device(self.serial)
-
-        # Configure streams
-        self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-        self.config.enable_stream(rs.stream.color, rgb_size[0], rgb_size[1], rs.format.bgr8, 30)
-
-        # Start streaming
-        self.pipeline.start(self.config)
-
-        # Get camera profile
-        self.profile = self.pipeline.get_active_profile()
+        # Create windows for real-time view if enabled
+        if config.real_time_view:
+            for i in range(len(self.devices)):
+                cv2.namedWindow(f"{self.state.WIN_NAME}_{i+1}", cv2.WINDOW_AUTOSIZE)
 
         # Set up aligner
         self.align = rs.align(rs.stream.color)
 
-        # Get depth scale
-        self.depth_scale = self.profile.get_device().first_depth_sensor().get_depth_scale()
+    def _setup_pipelines(self):
+        """Set up pipelines for all detected cameras"""
+        for serial in self.serial_numbers:
+            pipeline = rs.pipeline()
+            cfg = rs.config()
+            cfg.enable_device(serial)
+            cfg.enable_stream(rs.stream.depth, self.config.depth_size[0], self.config.depth_size[1], rs.format.z16, self.config.fps)
+            cfg.enable_stream(rs.stream.color, self.config.rgb_size[0], self.config.rgb_size[1], rs.format.bgr8, self.config.fps)
+            
+            # Start pipeline and store profile
+            profile = pipeline.start(cfg)
+            self.pipelines.append(pipeline)
+            self.profiles.append(profile)
+            
+            # Get depth scale
+            depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
+            self.depth_scales.append(depth_scale)
 
-        if real_time_view:
-            cv2.namedWindow(self.state.WIN_NAME, cv2.WINDOW_AUTOSIZE)
-
-    def get_camera_intrinsics(self, profile):
+    def get_camera_intrinsics(self, profile: rs.pipeline_profile) -> Tuple[np.ndarray, List[float]]:
+        """Get camera intrinsics for a given profile"""
         color_stream = rs.video_stream_profile(profile.get_stream(rs.stream.color))
         intrinsics = color_stream.get_intrinsics()
-
         mtx = [intrinsics.width, intrinsics.height, intrinsics.ppx, intrinsics.ppy, intrinsics.fx, intrinsics.fy]
-        camIntrinsics = np.array([[mtx[4], 0, mtx[2]],
-                                 [0, mtx[5], mtx[3]],
-                                 [0, 0, 1.]])
+        cam_intrinsics = np.array([
+            [mtx[4], 0, mtx[2]],
+            [0, mtx[5], mtx[3]],
+            [0, 0, 1]
+        ])
+        return cam_intrinsics, intrinsics.coeffs
 
-        return camIntrinsics, intrinsics.coeffs
-
-    def get_data(self):
-        """Get data from single camera"""
-        step = 0
+    def get_data(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, List[float]]]:
+        """Get data from all cameras"""
+        framesets = []
         while True:
-            # Wait for camera frames
-            frames = self.pipeline.wait_for_frames()
+            try:
+                # Wait for frames from all cameras
+                for pipeline in self.pipelines:
+                    frames = pipeline.wait_for_frames()
+                    aligned_frames = self.align.process(frames)
+                    framesets.append(aligned_frames)
 
-            # Align depth and color frames
-            aligned_frames = self.align.process(frames)
+                # Get depth and color frames
+                data = []
+                for i, frames in enumerate(framesets):
+                    depth_frame = frames.get_depth_frame()
+                    color_frame = frames.get_color_frame()
+                    
+                    if not depth_frame or not color_frame:
+                        framesets = []
+                        break
 
-            # Get depth and color frames
-            depth_frame = aligned_frames.get_depth_frame()
-            color_frame = aligned_frames.get_color_frame()
+                    depth_image = np.asanyarray(depth_frame.get_data())
+                    color_image = np.asanyarray(color_frame.get_data())
+                    cam_intrinsics, dist_coeffs = self.get_camera_intrinsics(self.profiles[i])
+                    data.append((color_image, depth_image, cam_intrinsics, dist_coeffs))
+                
+                if len(data) == len(self.pipelines):
+                    return data
 
-            if not all([depth_frame, color_frame]):
+            except RuntimeError:
+                print("Error capturing frames, retrying...")
+                framesets = []
                 continue
 
-            # Convert to numpy arrays
-            depth_image = np.asanyarray(depth_frame.get_data())
-            color_image = np.asanyarray(color_frame.get_data())
+    def cleanup(self):
+        """Clean up resources"""
+        for pipeline in self.pipelines:
+            pipeline.stop()
+        if self.config.real_time_view:
+            cv2.destroyAllWindows()
 
-            # Get camera parameters
-            camIntrinsics, distCoeffs = self.get_camera_intrinsics(self.profile)
-
-            break
-
-        return color_image, depth_image, camIntrinsics, distCoeffs
-
-def _init_rs_camera(real_time_view=False):
-    rs_module = RealSenseModule(real_time_view=real_time_view)
-    return rs_module
-
-def save_rgbd_seqs(rs_module, save_path='./force_feedback/replay_data/1/rgbd', saving_freq=10):
+def save_rgbd_seqs(rs_module: RealSenseModule, config: CameraConfig):
+    """Save RGB-D sequences from all cameras"""
+    os.makedirs(config.save_path, exist_ok=True)
     view_step = 0
+    timesleep = 1.0 / config.saving_freq
 
-    os.makedirs(save_path, exist_ok=True)
-
-    timesleep = 1. / saving_freq
-
-    while True:
-        try:
-            # Get data from camera
-            color_image, depth_image, camIntrinsics, distCoeffs = rs_module.get_data()
-
-            # Save data
-            np.save(os.path.join(save_path, f'color_image_{view_step}.npy'), color_image)
-            np.save(os.path.join(save_path, f'depth_image_{view_step}.npy'), depth_image)
-            np.save(os.path.join(save_path, f'camIntrinsics.npy'), camIntrinsics)
-            cv2.imwrite(os.path.join(save_path, f'color_image_{view_step}.jpg'), color_image)
-
+    try:
+        while True:
+            data = rs_module.get_data()
+            
+            for cam_idx, (color_img, depth_img, cam_intrinsics, _) in enumerate(data):
+                np.save(os.path.join(config.save_path, f'color_image_cam{cam_idx}_{view_step}.npy'), color_img)
+                np.save(os.path.join(config.save_path, f'depth_image_cam{cam_idx}_{view_step}.npy'), depth_img)
+                np.save(os.path.join(config.save_path, f'camIntrinsics_cam{cam_idx}.npy'), cam_intrinsics)
+                cv2.imwrite(os.path.join(config.save_path, f'color_image_cam{cam_idx}_{view_step}.jpg'), color_img)
+            
             view_step += 1
-            print('view_step: ', view_step)
-
+            print(f'view_step: {view_step}')
             time.sleep(timesleep)
 
-        except KeyboardInterrupt:
-            print("Exiting...")
-            break
+    except KeyboardInterrupt:
+        print("Saving stopped by user")
+    finally:
+        rs_module.cleanup()
 
-def get_rgbd(rs_module):
-    # Get data from camera
-    color_image, depth_image, camIntrinsics, distCoeffs = rs_module.get_data()
-    return color_image, depth_image, camIntrinsics
+def get_rgbd(rs_module: RealSenseModule) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Get RGB-D data from all cameras"""
+    data = rs_module.get_data()
+    return [(color_img, depth_img, cam_intrinsics) for color_img, depth_img, cam_intrinsics, _ in data]
+
+def parse_args() -> CameraConfig:
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="RealSense Camera Data Capture")
+    parser.add_argument('--real-time-view', action='store_true', help='Enable real-time view')
+    parser.add_argument('--rgb-width', type=int, default=640, help='RGB image width')
+    parser.add_argument('--rgb-height', type=int, default=480, help='RGB image height')
+    parser.add_argument('--depth-width', type=int, default=640, help='Depth image width')
+    parser.add_argument('--depth-height', type=int, default=480, help='Depth image height')
+    parser.add_argument('--fps', type=int, default=30, help='Frames per second')
+    parser.add_argument('--save-path', type=str, default='./force_feedback/replay_data/1/rgbd', 
+                       help='Path to save RGB-D data')
+    parser.add_argument('--saving-freq', type=int, default=10, help='Saving frequency in Hz')
+    
+    args = parser.parse_args()
+    return CameraConfig(
+        real_time_view=args.real_time_view,
+        rgb_size=(args.rgb_width, args.rgb_height),
+        depth_size=(args.depth_width, args.depth_height),
+        fps=args.fps,
+        save_path=args.save_path,
+        saving_freq=args.saving_freq
+    )
+
 
 if __name__ == '__main__':
-    camera = _init_rs_camera()
+    config = parse_args()
+    cameras = RealSenseModule(config)
+    
+    try:
+        # Get and display images from all cameras
+        data = get_rgbd(cameras)
+        for i, (color_img, _, _) in enumerate(data):
+            cv2.imshow(f'image{i+1}', color_img)
+            cv2.waitKey(0)
+        
+        # Uncomment to save sequences
+        # save_rgbd_seqs(cameras, config)
+    
+    finally:
+        cameras.cleanup()
+        cv2.destroyAllWindows()
 
-    image, depth, intrinsics = get_rgbd(camera)
-
-    cv2.imshow('Camera Image', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    # save_rgbd_seqs(camera, './test_camera', 30)
+# python script.py --real-time-view --rgb-width 1280 --rgb-height 720 --fps 30 --save-path ./data
