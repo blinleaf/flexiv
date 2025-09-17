@@ -232,12 +232,12 @@ def main(task, path, frequency):
 
         robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
-        logger.warn(
+        logging.warn(
             "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
         )
         while not robot.primitive_states()["terminated"]:
             time.sleep(1)
-        logger.info("Sensor zeroing complete")
+        logging.info("Sensor zeroing complete")
 
         logging.info(f"Starting teleoperation, recording to: {output_file}")
 
