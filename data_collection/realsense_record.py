@@ -16,8 +16,8 @@ class CameraConfig:
     rgb_size: Tuple[int, int] = (640, 480)
     depth_size: Tuple[int, int] = (640, 480)
     fps: int = 30
-    save_path: str = './force_feedback/replay_data/1/rgbd'
-    saving_freq: int = 10
+    save_path: str = './realsense/rgbd'
+    save_freq: int = 10
 
 class AppState:
     def __init__(self):
@@ -146,7 +146,7 @@ def save_rgbd_seqs(rs_module: RealSenseModule, config: CameraConfig):
     """Save RGB-D sequences from all cameras"""
     os.makedirs(config.save_path, exist_ok=True)
     view_step = 0
-    timesleep = 1.0 / config.saving_freq
+    timesleep = 1.0 / config.save_freq
 
     try:
         while True:
@@ -163,7 +163,7 @@ def save_rgbd_seqs(rs_module: RealSenseModule, config: CameraConfig):
             time.sleep(timesleep)
 
     except KeyboardInterrupt:
-        print("Saving stopped by user")
+        print("save stopped by user")
     finally:
         rs_module.cleanup()
 
@@ -181,9 +181,9 @@ def parse_args() -> CameraConfig:
     parser.add_argument('--depth-width', type=int, default=640, help='Depth image width')
     parser.add_argument('--depth-height', type=int, default=480, help='Depth image height')
     parser.add_argument('--fps', type=int, default=30, help='Frames per second')
-    parser.add_argument('--save-path', type=str, default='./force_feedback/replay_data/1/rgbd', 
+    parser.add_argument('--save_path', type=str, default='./realsense/rgbd', 
                        help='Path to save RGB-D data')
-    parser.add_argument('--saving-freq', type=int, default=10, help='Saving frequency in Hz')
+    parser.add_argument('--save_freq', type=int, default=10, help='save frequency in Hz')
     
     args = parser.parse_args()
     return CameraConfig(
@@ -192,7 +192,7 @@ def parse_args() -> CameraConfig:
         depth_size=(args.depth_width, args.depth_height),
         fps=args.fps,
         save_path=args.save_path,
-        saving_freq=args.saving_freq
+        save_freq=args.save_freq
     )
 
 
@@ -214,4 +214,4 @@ if __name__ == '__main__':
         cameras.cleanup()
         cv2.destroyAllWindows()
 
-# python realsense_record.py --real-time-view --rgb-width 1280 --rgb-height 720 --fps 30 --save-path ./data
+# python realsense_record.py --real-time-view --rgb-width 1280 --rgb-height 720 --fps 30 --save_path ./data
