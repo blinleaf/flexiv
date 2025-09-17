@@ -72,17 +72,15 @@ class TrajectoryRecorder:
             self.dq_list.append([float(i) for i in robot_states.dq])
             self.dtheta_list.append([float(i) for i in robot_states.dtheta])
             self.tau_list.append([float(i) for i in robot_states.tau])
-            self.tau_des_list.append([float(i) for i in robot_states.tauDes])
-            self.tau_dot_list.append([float(i) for i in robot_states.tauDot])
-            self.tau_ext_list.append([float(i) for i in robot_states.tauExt])
-            self.tcp_pose_list.append([float(i) for i in robot_states.tcpPose])
-            self.tcp_pose_d_list.append([float(i) for i in robot_states.tcpPoseDes])
-            self.tcp_velocity_list.append([float(i) for i in robot_states.tcpVel])
-            self.camera_pose_list.append([float(i) for i in robot_states.camPose])
-            self.flange_pose_list.append([float(i) for i in robot_states.flangePose])
-            self.ft_sensor_raw_list.append([float(i) for i in robot_states.ftSensorRaw])
-            self.f_ext_tcp_frame_list.append([float(i) for i in robot_states.extWrenchInTcp])
-            self.f_ext_base_frame_list.append([float(i) for i in robot_states.extWrenchInBase])
+            self.tau_des_list.append([float(i) for i in robot_states.tau_des])
+            self.tau_dot_list.append([float(i) for i in robot_states.tau_dot])
+            self.tau_ext_list.append([float(i) for i in robot_states.tau_ext])
+            self.tcp_pose_list.append([float(i) for i in robot_states.tcp_pose])
+            self.tcp_velocity_list.append([float(i) for i in robot_states.tcp_vel])
+            self.flange_pose_list.append([float(i) for i in robot_states.flange_pose])
+            self.ft_sensor_raw_list.append([float(i) for i in robot_states.ft_sensor_raw])
+            self.f_ext_tcp_frame_list.append([float(i) for i in robot_states.ext_wrench_in_tcp])
+            self.f_ext_base_frame_list.append([float(i) for i in robot_states.ext_wrench_in_base])
             self.gripper_width_list.append(float(gripper_states.width))
 
             camera_data = get_rgbd(self.cameras)
@@ -92,7 +90,7 @@ class TrajectoryRecorder:
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            logger.error(f"Error adding state data: {str(e)}")
+            self.logger.error(f"Error adding state data: {str(e)}")
 
     def add_action(self, offset_pos, offset_quat, gripper_close):
         """Add action data for one timestep"""
@@ -147,9 +145,7 @@ class TrajectoryRecorder:
             hf.create_dataset('tau_dot', data=np.array(self.tau_dot_list))
             hf.create_dataset('tau_ext', data=np.array(self.tau_ext_list))
             hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list))
-            hf.create_dataset('tcp_pose_d', data=np.array(self.tcp_pose_d_list))
             hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list))
-            hf.create_dataset('camera_pose', data=np.array(self.camera_pose_list))
             hf.create_dataset('flange_pose', data=np.array(self.flange_pose_list))
             hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list))
             hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list))
@@ -173,7 +169,7 @@ class TrajectoryRecorder:
             hf.attrs['creation_date'] = time.strftime("%Y-%m-%d %H:%M:%S")
             hf.attrs['num_cameras'] = self.num_cameras
 
-        logger.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
+        self.logger.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
 
 def get_cur_pose(robot, gripper):
     """Get current robot and gripper pose"""
