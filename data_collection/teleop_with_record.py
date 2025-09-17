@@ -303,7 +303,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                 offset_quat = quaternion.quaternion.inverse(start_input_quat) * current_input_quat
                 pos = start_tcp_pos + offset_pos
                 quat = start_tcp_quat * offset_quat
-                robot.sendCartesianMotionForce([*pos, quat.w, quat.x, quat.y, quat.z], [0.0] * 6)
+                robot.SendCartesianMotionForce([*pos, quat.w, quat.x, quat.y, quat.z], [0.0] * 6)
                 gripper_close = 0.09 * (1 - current_input.get('rightIndex', 0)) + 0.01
                 gripper.Move(gripper_close, 0.1, 20)
                 recorder.add_action(pos, quat, gripper_close)
