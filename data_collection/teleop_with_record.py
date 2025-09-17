@@ -264,6 +264,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
             current_input, _, _ = quest_controller.get_input_frame()
 
             if current_input is None:
+                logger.warn("No input from Quest controller, waiting...")
                 time.sleep(0.02)
                 continue
 
