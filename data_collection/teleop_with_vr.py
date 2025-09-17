@@ -12,7 +12,7 @@ import threading
 import os
 import numpy as np
 import h5py
-import logging
+import spdlog
 from datetime import datetime
 
 # Import utility methods
@@ -91,7 +91,7 @@ class TrajectoryRecorder:
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            logging.error(f"Error adding state data: {str(e)}")
+            logger.error(f"Error adding state data: {str(e)}")
 
     def add_action(self, offset_pos, offset_quat, gripper_close):
         """Add action data for one timestep"""
@@ -132,7 +132,7 @@ class TrajectoryRecorder:
     def save_trajectory(self, task):
         """Save trajectory data to HDF5 file, compressing camera images"""
         self.align_frames()
-        logging.info(f"Saving trajectory to {self.output_file}...")
+        logger.info(f"Saving trajectory to {self.output_file}...")
 
         with h5py.File(self.output_file, 'w') as hf:
             # Store scalar data without compression
@@ -172,11 +172,11 @@ class TrajectoryRecorder:
             hf.attrs['creation_date'] = time.strftime("%Y-%m-%d %H:%M:%S")
             hf.attrs['num_cameras'] = self.num_cameras
 
-        logging.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
+        logger.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
 
 def print_description():
     """Print tutorial description."""
-    logging.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
+    logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
 
 def get_cur_pose(robot, gripper):
     """Get current robot and gripper pose"""
@@ -189,9 +189,7 @@ def get_cur_pose(robot, gripper):
 
 def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path="./data"):
     """Main function for teleoperation with recording"""
-    logging.basicConfig(level=logging.INFO, 
-                       format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                       handlers=[logging.StreamHandler()])
+    logger = spdlog.ConsoleLogger("Example")
     mode = flexivrdk.Mode
 
     print_description()
@@ -216,28 +214,28 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         # RDK Initialization
         robot = flexivrdk.Robot("Rizon 4s-063034")
         if robot.fault():
-            logging.warning("Fault on robot server, trying to clear...")
+            logger.warning("Fault on robot server, trying to clear...")
             robot.ClearFault()
             time.sleep(2)
             if robot.fault():
-                logging.error("Fault cannot be cleared, exiting...")
+                logger.error("Fault cannot be cleared, exiting...")
                 return
-            logging.info("Fault cleared")
+            logger.info("Fault cleared")
 
-        logging.info("Enabling robot...")
+        logger.info("Enabling robot...")
         robot.Enable()
         seconds_waited = 0
         while not robot.operational():
             time.sleep(1)
             seconds_waited += 1
             if seconds_waited == 10:
-                logging.warning("Robot not operational, check: 1) no fault, 2) in Auto (remote) mode")
+                logger.warning("Robot not operational, check: 1) no fault, 2) in Auto (remote) mode")
                 return
-        logging.info("Robot operational")
+        logger.info("Robot operational")
         
         gripper = flexivrdk.Gripper(robot)
         gripper.Enable("Flexiv-GN01")
-        logging.info("Opening gripper")
+        logger.info("Opening gripper")
         gripper.Move(0.09, 0.1, 20)
         time.sleep(1)
 
@@ -249,14 +247,14 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
 
         robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
-        logging.warning(
+        logger.warning(
             "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
         )
         while not robot.primitive_states()["terminated"]:
             time.sleep(1)
-        logging.info("Sensor zeroing complete")
+        logger.info("Sensor zeroing complete")
 
-        logging.info(f"Starting teleoperation, recording to: {output_file}")
+        logger.info(f"Starting teleoperation, recording to: {output_file}")
 
         last_input = None
         frame_cnt = 0
@@ -273,7 +271,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                 continue
 
             if current_input.get('Y', False) and current_input.get('B', False):
-                logging.info("Y + B detected, stopping recording...")
+                logger.info("Y + B detected, stopping recording...")
                 break
 
             if last_input is None:
@@ -313,12 +311,12 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
             last_input = current_input
             frame_cnt += 1
             if frame_cnt % frequency == 0:
-                logging.info(f"Recorded {frame_cnt} frames...")
+                logger.info(f"Recorded {frame_cnt} frames...")
 
     except KeyboardInterrupt:
-        logging.info("Interrupted by user, saving trajectory...")
+        logger.info("Interrupted by user, saving trajectory...")
     except Exception as e:
-        logging.error(f"Error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         import traceback
         traceback.print_exc()
     finally:
@@ -331,7 +329,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
 
         recorder.cameras.cleanup()
         recorder.save_trajectory(task)
-        logging.info(f"Trajectory saved to {recorder.output_file}")
+        logger.info(f"Trajectory saved to {recorder.output_file}")
 
 
 if __name__ == "__main__":
