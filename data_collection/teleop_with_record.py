@@ -52,6 +52,7 @@ class TrajectoryRecorder:
 
         self.output_file = output_file
         self.is_recording = True
+        self.logger = spdlog.ConsoleLogger("Recorder")
         # Initialize RealSenseModule
         self.cameras = RealSenseModule(camera_config)
         # Initialize lists for each camera
