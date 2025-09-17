@@ -224,14 +224,21 @@ def main(task, path, frequency):
         gripper.Move(0.09, 0.1, 20)
         time.sleep(1)
 
-        robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
-        logging.info("Executing primitive: Home")
-        robot.ExecutePrimitive("Home", dict())
-        while not robot.primitive_states().get("reachedTarget", False):
-            time.sleep(0.1)
+        robot.SwitchMode(mode.NRT_PLAN_EXECUTION)
+        robot.ExecutePlan("PLAN-Home")
+        # Wait for the plan to finish
+        while robot.busy():
+            time.sleep(1)
 
+        robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
-        robot.SwitchMode(mode.NRT_CARTESIAN_MOTION_FORCE)
+        logger.warn(
+            "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
+        )
+        while not robot.primitive_states()["terminated"]:
+            time.sleep(1)
+        logger.info("Sensor zeroing complete")
+
         logging.info(f"Starting teleoperation, recording to: {output_file}")
 
         last_input = None
@@ -298,14 +305,13 @@ def main(task, path, frequency):
         import traceback
         traceback.print_exc()
     finally:
-        robot.ExecutePrimitive("Home", dict())
-        logging.info("Executing primitive: Move to HOME")
-        while not robot.primitive_states().get("reachedTarget", False):
-            time.sleep(0.1)
+        recorder.align_frames()
+        robot.SwitchMode(mode.NRT_PLAN_EXECUTION)
+        robot.ExecutePlan("PLAN-Home")
+        # Wait for the plan to finish
+        while robot.busy():
+            time.sleep(0.01)
 
-        cur_robot_states, cur_tcp_pos, cur_tcp_quat, cur_gripper_states = get_cur_pose(robot, gripper)
-        recorder.add_state(cur_robot_states, cur_gripper_states)
-        recorder.add_action(cur_tcp_pos, cur_tcp_quat, cur_gripper_states.width)
         recorder.save_trajectory(task)
         logging.info(f"Trajectory saved to {recorder.output_file}")
 
