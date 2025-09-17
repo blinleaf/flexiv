@@ -140,9 +140,15 @@ class TrajectoryRecorder:
         """Save trajectory data to HDF5 file, compressing camera images"""
         self.align_frames()
         self.logger.info(f"Saving trajectory to {self.output_file}...")
-
-        with h5py.File(self.output_file, 'w') as hf:
-            # Store scalar data without compression
+        
+        def save_images(hf, images, cam_name):
+            hf.create_dataset(cam_name, data=images, 
+                            compression='lzf',
+                            chunks=(1, images.shape[1], images.shape[2], images.shape[3]))
+            hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
+        
+        with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
+            # Save non-image data
             hf.create_dataset('timestamps', data=np.array(self.timestamps))
             hf.create_dataset('q', data=np.array(self.q_list))
             hf.create_dataset('theta', data=np.array(self.theta_list))
@@ -160,23 +166,26 @@ class TrajectoryRecorder:
             hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list))
             hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list))
             hf.create_dataset('action', data=np.array(self.action_list))
-
-            # Store image data with compression for each camera
-            for i in range(self.num_cameras):
-                cam_name = f'cam{i+1}'
-                images = np.array(self.camera_images_list[cam_name])
-                hf.create_dataset(cam_name, data=images, 
-                               compression='gzip', compression_opts=9,
-                               chunks=(1, images.shape[1], images.shape[2], images.shape[3]))
-                # Store image shape as attribute
-                hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
-
-            # Store metadata
+            
+            # Save metadata
             hf.attrs['instruction'] = task
             hf.attrs['num_frames'] = len(self.timestamps)
             hf.attrs['creation_date'] = time.strftime("%Y-%m-%d %H:%M:%S")
             hf.attrs['num_cameras'] = self.num_cameras
-
+            
+            # Save images asynchronously
+            threads = []
+            for i in range(self.num_cameras):
+                cam_name = f'cam{i+1}'
+                images = np.array(self.camera_images_list[cam_name])
+                thread = threading.Thread(target=save_images, args=(hf, images, cam_name))
+                threads.append(thread)
+                thread.start()
+            
+            # Wait for all image saving to complete
+            for thread in threads:
+                thread.join()
+        
         self.logger.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
 
 def get_cur_pose(robot, gripper):
@@ -255,6 +264,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
             time.sleep(1)
         logger.info("Sensor zeroing complete")
 
+        robot.SwitchMode(mode.NRT_CARTESIAN_MOTION_FORCE)
         logger.info(f"Starting teleoperation, recording to: {output_file}")
 
         last_input = None
