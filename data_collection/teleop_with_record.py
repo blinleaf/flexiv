@@ -47,7 +47,7 @@ class TrajectoryRecorder:
         self.f_ext_tcp_frame_list = []
         self.f_ext_base_frame_list = []
         self.gripper_width_list = []
-        self.camera_images_list = {}  # Dictionary to store images from multiple cameras
+        self.camera_images_list = {}
         self.action_list = []
 
         self.output_file = output_file
@@ -56,7 +56,8 @@ class TrajectoryRecorder:
         # Initialize RealSenseModule
         self.cameras = RealSenseModule(camera_config)
         # Initialize lists for each camera
-        self.num_cameras = len(self.cameras.cameras) if hasattr(self.cameras, 'cameras') else 1
+        self.num_cameras = len(self.cameras.serial_numbers)
+        self.logger.info(f"Initialized {self.num_cameras} cameras")
         for i in range(self.num_cameras):
             self.camera_images_list[f'cam{i+1}'] = []
 
@@ -84,8 +85,15 @@ class TrajectoryRecorder:
             self.gripper_width_list.append(float(gripper_states.width))
 
             camera_data = get_rgbd(self.cameras)
+            if len(camera_data) != self.num_cameras:
+                self.logger.error(f"Expected {self.num_cameras} camera feeds, but got {len(camera_data)}")
+                return
             for i, (image, _, _) in enumerate(camera_data):
-                self.camera_images_list[f'cam{i+1}'].append(np.array(image, copy=True))
+                cam_key = f'cam{i+1}'
+                if cam_key not in self.camera_images_list:
+                    self.logger.warn(f"Camera key {cam_key} not initialized, creating now")
+                    self.camera_images_list[cam_key] = []
+                self.camera_images_list[cam_key].append(np.array(image, copy=True))
 
         except KeyboardInterrupt:
             raise
