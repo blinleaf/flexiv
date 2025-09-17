@@ -150,6 +150,7 @@ if __name__ == "__main__":
         )
         # Keep the main thread alive
         while True:
+            print(quest_teleop.get_input_frame())
             time.sleep(1)
     except KeyboardInterrupt:
         logging.info("Shutting down QuestTeleop")
