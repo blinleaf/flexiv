@@ -272,7 +272,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                 last_input = current_input
 
             recorder.add_state(robot_states, gripper_states)
-            current_tcp_pose = robot_states.tcpPose
+            current_tcp_pose = robot_states.tcp_pose
             current_tcp_pos = np.array(current_tcp_pose[:3])
             current_tcp_quat = quaternion.quaternion(*current_tcp_pose[3:])
             
