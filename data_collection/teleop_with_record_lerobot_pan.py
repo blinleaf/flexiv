@@ -46,10 +46,15 @@ from lerobot.datasets.video_utils import encode_video_frames, get_video_info, ge
 class LeRobotTrajectoryRecorder:
     def __init__(self, repo_id: str, output_dir: str, camera_config: CameraConfig, fps: int = 30):
         """Initialize the LeRobot dataset recorder with video support."""
+        # Initialize cameras
+        self.cameras = RealSenseModule(camera_config)
+        self.is_recording = True
+        self.episode_index = 0
+
         self.logger = spdlog.ConsoleLogger("Recorder")
         self.output_dir = Path(output_dir)
         self.fps = fps
-        self.num_cameras = len(camera_config.serial_numbers)
+        self.num_cameras = len(self.cameras.serial_numbers)
         self.logger.info(f"Initialized {self.num_cameras} cameras")
 
         # Define features for the LeRobot dataset
@@ -93,11 +98,6 @@ class LeRobotTrajectoryRecorder:
             video_backend="pyav",
             batch_encoding_size=1
         )
-
-        # Initialize cameras
-        self.cameras = RealSenseModule(camera_config)
-        self.is_recording = True
-        self.episode_index = 0
 
     def add_state(self, robot_states, quest_input=None):
         """Add state data for one timestep to the episode buffer."""
