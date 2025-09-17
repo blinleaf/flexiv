@@ -174,10 +174,6 @@ class TrajectoryRecorder:
 
         logger.info(f"Task: {task}, Frames: {len(self.timestamps)}, Saved to: {self.output_file}")
 
-def print_description():
-    """Print tutorial description."""
-    logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
-
 def get_cur_pose(robot, gripper):
     """Get current robot and gripper pose"""
     robot_states = robot.states()
@@ -190,9 +186,9 @@ def get_cur_pose(robot, gripper):
 def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path="./data"):
     """Main function for teleoperation with recording"""
     logger = spdlog.ConsoleLogger("Example")
-    mode = flexivrdk.Mode
+    logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
 
-    print_description()
+    mode = flexivrdk.Mode
     os.makedirs(path, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = os.path.join(path, f"trajectory_{timestamp}.h5")
