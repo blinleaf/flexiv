@@ -232,7 +232,7 @@ def main(task, path, frequency):
 
         robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
-        logging.warn(
+        logging.warning(
             "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
         )
         while not robot.primitive_states()["terminated"]:
