@@ -210,7 +210,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
     )
     
     recorder = TrajectoryRecorder(output_file, camera_config)
-    quest_controller = quest_teleop()
+    quest_controller = QuestTeleop()
 
     try:
         # RDK Initialization
