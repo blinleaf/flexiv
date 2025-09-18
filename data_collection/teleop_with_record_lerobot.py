@@ -3,7 +3,7 @@
 """teleop_with_recording_lerobot_videos.py
 
 This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording
-in the LeRobot dataset format, saving camera data as MP4 videos. Gripper functionality has been removed.
+in the LeRobot dataset format, saving camera data as MP4 videos.
 """
 
 import json
@@ -46,15 +46,10 @@ from lerobot.datasets.video_utils import encode_video_frames, get_video_info, ge
 class LeRobotTrajectoryRecorder:
     def __init__(self, repo_id: str, output_dir: str, camera_config: CameraConfig, fps: int = 30):
         """Initialize the LeRobot dataset recorder with video support."""
-        # Initialize cameras
-        self.cameras = RealSenseModule(camera_config)
-        self.is_recording = True
-        self.episode_index = 0
-
         self.logger = spdlog.ConsoleLogger("Recorder")
         self.output_dir = Path(output_dir)
         self.fps = fps
-        self.num_cameras = len(self.cameras.serial_numbers)
+        self.num_cameras = len(camera_config.serial_numbers)
         self.logger.info(f"Initialized {self.num_cameras} cameras")
 
         # Define features for the LeRobot dataset
@@ -77,7 +72,8 @@ class LeRobotTrajectoryRecorder:
             "ft_sensor_raw": {"dtype": "float32", "shape": [6], "names": ["fx", "fy", "fz", "tx", "ty", "tz"]},
             "f_ext_tcp_frame": {"dtype": "float32", "shape": [6], "names": ["fx", "fy", "fz", "tx", "ty", "tz"]},
             "f_ext_base_frame": {"dtype": "float32", "shape": [6], "names": ["fx", "fy", "fz", "tx", "ty", "tz"]},
-            "action": {"dtype": "float32", "shape": [7], "names": ["x", "y", "z", "qw", "qx", "qy", "qz"]},
+            "gripper_width": {"dtype": "float32", "shape": []},
+            "action": {"dtype": "float32", "shape": [8], "names": ["x", "y", "z", "qw", "qx", "qy", "qz", "gripper_close"]},
         }
         for i in range(self.num_cameras):
             self.features[f"observation.image.cam{i+1}"] = {
@@ -99,7 +95,12 @@ class LeRobotTrajectoryRecorder:
             batch_encoding_size=1
         )
 
-    def add_state(self, robot_states, quest_input=None):
+        # Initialize cameras
+        self.cameras = RealSenseModule(camera_config)
+        self.is_recording = True
+        self.episode_index = 0
+
+    def add_state(self, robot_states, gripper_states, quest_input=None):
         """Add state data for one timestep to the episode buffer."""
         if not self.is_recording:
             return
@@ -121,6 +122,7 @@ class LeRobotTrajectoryRecorder:
                 "ft_sensor_raw": np.array(robot_states.ft_sensor_raw, dtype=np.float32),
                 "f_ext_tcp_frame": np.array(robot_states.ext_wrench_in_tcp, dtype=np.float32),
                 "f_ext_base_frame": np.array(robot_states.ext_wrench_in_world, dtype=np.float32),
+                "gripper_width": np.float32(gripper_states.width),
             }
 
             # Add camera images (stored temporarily as PNGs)
@@ -132,7 +134,7 @@ class LeRobotTrajectoryRecorder:
                 frame[f"observation.image.cam{i+1}"] = np.array(image, dtype=np.uint8)
 
             # Add action (will be updated by add_action)
-            frame["action"] = np.zeros(7, dtype=np.float32)  # Placeholder
+            frame["action"] = np.zeros(8, dtype=np.float32)  # Placeholder
             frame["task"] = "teleoperation"  # Default task name, updated later
 
             # Validate and add frame to episode buffer
@@ -144,7 +146,7 @@ class LeRobotTrajectoryRecorder:
         except Exception as e:
             self.logger.error(f"Error adding state data: {str(e)}")
 
-    def add_action(self, offset_pos, offset_quat):
+    def add_action(self, offset_pos, offset_quat, gripper_close):
         """Update the action in the last frame of the episode buffer."""
         if not self.is_recording or self.dataset.episode_buffer is None:
             return
@@ -152,7 +154,8 @@ class LeRobotTrajectoryRecorder:
         try:
             action = np.array([
                 offset_pos[0], offset_pos[1], offset_pos[2],
-                offset_quat.w, offset_quat.x, offset_quat.y, offset_quat.z
+                offset_quat.w, offset_quat.x, offset_quat.y, offset_quat.z,
+                gripper_close
             ], dtype=np.float32)
             # Update the action in the last frame
             if self.dataset.episode_buffer["size"] > 0:
@@ -283,7 +286,6 @@ class LeRobotDataset:
 
     def save_episode(self):
         """Save the current episode to disk, encoding images as videos."""
-
         from datasets import Dataset
         import pandas as pd
         episode_buffer = self.episode_buffer
@@ -434,13 +436,14 @@ class LeRobotDataset:
             self.image_writer.stop()
             self.image_writer = None
 
-def get_cur_pose(robot):
-    """Get current robot pose."""
+def get_cur_pose(robot, gripper):
+    """Get current robot and gripper pose."""
     robot_states = robot.states()
     current_tcp_pose = robot_states.tcp_pose
     current_tcp_pos = np.array(current_tcp_pose[:3])
     current_tcp_quat = quaternion.quaternion(*current_tcp_pose[3:])
-    return robot_states, current_tcp_pos, current_tcp_quat
+    gripper_states = gripper.states()
+    return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
 def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path="./data"):
     """Main function for teleoperation with recording in LeRobot format with videos."""
@@ -488,6 +491,12 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                 return
         logger.info("Robot operational")
 
+        gripper = flexivrdk.Gripper(robot)
+        gripper.Enable("Flexiv-GN01")
+        logger.info("Opening gripper")
+        gripper.Move(0.1, 0.1, 20)
+        time.sleep(1)
+
         robot.SwitchMode(mode.NRT_PLAN_EXECUTION)
         robot.ExecutePlan("PLAN-Home")
         while robot.busy():
@@ -505,10 +514,11 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
 
         last_input = None
         frame_cnt = 0
-        last_robot_states, last_tcp_pos, last_tcp_quat = get_cur_pose(robot)
+        last_robot_states, last_tcp_pos, last_tcp_quat, last_gripper_states = get_cur_pose(robot, gripper)
 
         while True:
             robot_states = robot.states()
+            gripper_states = gripper.states()
             quest_controller.joint_states = np.array(robot_states.q)
             current_input, _, _ = quest_controller.get_input_frame()
 
@@ -524,7 +534,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
             if last_input is None:
                 last_input = current_input
 
-            recorder.add_state(robot_states)
+            recorder.add_state(robot_states, gripper_states)
             current_tcp_pose = robot_states.tcp_pose
             current_tcp_pos = np.array(current_tcp_pose[:3])
             current_tcp_quat = quaternion.quaternion(*current_tcp_pose[3:])
@@ -554,9 +564,11 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                 pos = start_tcp_pos + offset_pos
                 quat = start_tcp_quat * offset_quat
                 robot.SendCartesianMotionForce([*pos, quat.w, quat.x, quat.y, quat.z], [0.0] * 6)
-                recorder.add_action(pos, quat)
+                gripper_close = 0.09 * (1 - current_input.get('rightIndex', 0)) + 0.01
+                gripper.Move(gripper_close, 0.1, 20)
+                recorder.add_action(pos, quat, gripper_close)
             else:
-                recorder.add_action(current_tcp_pos, current_tcp_quat)
+                recorder.add_action(current_tcp_pos, current_tcp_quat, gripper_states.width)
 
             last_input = current_input
             frame_cnt += 1
