@@ -246,10 +246,13 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         gripper = flexivrdk.Gripper(robot)
         gripper.Enable("Flexiv-GN01")
         gripper.Init()
+        while robot.busy():
+            time.sleep(1)
         
         logger.info("Opening gripper")
-        gripper.Move(0.1, 0.1, 20)
-        time.sleep(1)
+        gripper.Move(0.1, 0.5, 20)
+        while robot.busy():
+            time.sleep(1)
 
         robot.SwitchMode(mode.NRT_PLAN_EXECUTION)
         robot.ExecutePlan("PLAN-Home")
@@ -317,7 +320,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                 quat = start_tcp_quat * offset_quat
                 robot.SendCartesianMotionForce([*pos, quat.w, quat.x, quat.y, quat.z], [0.0] * 6)
                 gripper_close = 0.09 * (1 - current_input.get('rightIndex', 0)) + 0.01
-                gripper.Move(gripper_close, 0.1, 20)
+                gripper.Move(gripper_close, 0.5, 20)
                 recorder.add_action(pos, quat, gripper_close)
             else:
                 recorder.add_action(current_tcp_pos, current_tcp_quat, gripper_states.width)
