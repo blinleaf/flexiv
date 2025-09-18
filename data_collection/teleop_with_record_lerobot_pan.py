@@ -537,12 +537,17 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                                                     current_input['rightRot']["x"],
                                                     current_input['rightRot']["y"])
 
+            # Initialize a flag to track if this is the first iteration
+            is_first_iteration = True
+
             if current_input.get('rightHand', 0) > 0.5:
-                if last_input.get('rightHand', 0) <= 0.5:
-                    start_tcp_pos = current_tcp_pos
-                    start_tcp_quat = current_tcp_quat
-                    start_input_pos = current_input_pos
-                    start_input_quat = current_input_quat
+                if is_first_iteration or last_input.get('rightHand', 0) <= 0.5:
+                    if not is_first_iteration:
+                        start_tcp_pos = current_tcp_pos
+                        start_tcp_quat = current_tcp_quat
+                        start_input_pos = current_input_pos
+                        start_input_quat = current_input_quat
+                is_first_iteration = False
 
                 offset_pos = current_input_pos - start_input_pos
                 offset_quat = quaternion.quaternion.inverse(start_input_quat) * current_input_quat
