@@ -271,6 +271,9 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         frame_cnt = 0
         last_robot_states, last_tcp_pos, last_tcp_quat, last_gripper_states = get_cur_pose(robot, gripper)
 
+        # Initialize a flag to track if this is the first iteration
+        is_first_iteration = True
+
         while True:
             robot_states = robot.states()
             gripper_states = gripper.states()
@@ -301,9 +304,6 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
                                                     current_input['rightRot']["z"], 
                                                     current_input['rightRot']["x"], 
                                                     current_input['rightRot']["y"])
-
-            # Initialize a flag to track if this is the first iteration
-            is_first_iteration = True
 
             if current_input.get('rightHand', 0) > 0.5:
                 if is_first_iteration or last_input.get('rightHand', 0) <= 0.5:
