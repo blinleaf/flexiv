@@ -45,7 +45,7 @@ def get_features(num_cameras):
         "observation.state.ft_sensor_raw": {"dtype": "float32", "shape": [6], "names": ["fx", "fy", "fz", "mx", "my", "mz"]},
         "observation.state.f_ext_tcp_frame": {"dtype": "float32", "shape": [6], "names": ["fx", "fy", "fz", "mx", "my", "mz"]},
         "observation.state.f_ext_base_frame": {"dtype": "float32", "shape": [6], "names": ["fx", "fy", "fz", "mx", "my", "mz"]},
-        "observation.state.gripper_width": {"dtype": "float32", "shape": []},
+        "observation.state.gripper_width": {"dtype": "float32", "shape": [1]},
         "action": {"dtype": "float32", "shape": [8], "names": ["x", "y", "z", "qw", "qx", "qy", "qz", "gripper_close"]},
     }
     # Add camera features as videos
