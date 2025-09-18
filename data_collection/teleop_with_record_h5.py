@@ -245,6 +245,8 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         
         gripper = flexivrdk.Gripper(robot)
         gripper.Enable("Flexiv-GN01")
+        gripper.Init()
+        
         logger.info("Opening gripper")
         gripper.Move(0.1, 0.1, 20)
         time.sleep(1)
