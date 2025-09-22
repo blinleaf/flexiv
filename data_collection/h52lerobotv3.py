@@ -28,7 +28,6 @@ def create_empty_dataset(
     robot_type: str = "flexiv_rizon",
     mode: Literal["video", "image"] = "video",
     *,
-    has_velocity: bool = True,
     has_effort: bool = True,
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
 ) -> LeRobotDataset:
@@ -47,11 +46,6 @@ def create_empty_dataset(
             "names": motors,  # Fix: Use list directly, not nested
         },
         "action": {
-            "dtype": "float32",
-            "shape": (len(motors), ),
-            "names": motors,
-        },
-        "observation.velocity": {
             "dtype": "float32",
             "shape": (len(motors), ),
             "names": motors,
@@ -85,10 +79,6 @@ def get_cameras(hdf5_files: list[Path]) -> list[str]:
     with h5py.File(hdf5_files[0], "r") as ep:
         return [key for key in ep if key.startswith('cam')]
 
-def has_velocity(hdf5_files: list[Path]) -> bool:
-    with h5py.File(hdf5_files[0], "r") as ep:
-        return "tcp_velocity" in ep
-
 def has_effort(hdf5_files: list[Path]) -> bool:
     with h5py.File(hdf5_files[0], "r") as ep:
         return "f_ext_tcp_frame" in ep
@@ -121,15 +111,10 @@ def load_raw_episode_data(
             ep["gripper_width"][:][:, None]  # gripper width
         ])).float()  # Convert to float32
         action = torch.from_numpy(ep["action"][:]).float()  # Convert to float32
-        velocity = torch.from_numpy(np.hstack([
-            ep["tcp_velocity"][:, :3],  # velocity x, y, z
-            ep["tcp_velocity"][:, 3:],  # angular velocity (3 components)
-            np.zeros_like(ep["gripper_width"][:][:, None])  # gripper velocity
-        ])).float()  # Convert to float32
         effort = torch.from_numpy(ep["f_ext_tcp_frame"][:]).float()  # Convert to float32
         imgs_per_cam = load_raw_images_per_camera(ep, [key for key in ep if key.startswith('cam')])
 
-    return imgs_per_cam, state, action, velocity, effort
+    return imgs_per_cam, state, action, effort
 
 def populate_dataset(
     dataset: LeRobotDataset,
@@ -142,7 +127,7 @@ def populate_dataset(
 
     for ep_idx in tqdm.tqdm(episodes):
         ep_path = hdf5_files[ep_idx]
-        imgs_per_cam, state, action, velocity, effort = load_raw_episode_data(ep_path)
+        imgs_per_cam, state, action, effort = load_raw_episode_data(ep_path)
         num_frames = state.shape[0]
         
         # Get task instruction from HDF5 attributes
@@ -153,7 +138,6 @@ def populate_dataset(
             frame = {
                 "observation.state": state[i],
                 "action": action[i],
-                "observation.velocity": velocity[i],
                 "observation.effort": effort[i],
                 "task": instruction,
             }
@@ -194,7 +178,6 @@ def port_teleop_to_lerobot(
         robot_type="flexiv_rizon",
         mode=mode,
         has_effort=has_effort(hdf5_files),
-        has_velocity=has_velocity(hdf5_files),
         dataset_config=dataset_config,
     )
     dataset = populate_dataset(
