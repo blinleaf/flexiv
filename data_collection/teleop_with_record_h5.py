@@ -117,24 +117,29 @@ class TrajectoryRecorder:
                 f"{cam_name} image length ({len(self.camera_images_list[cam_name])}) doesn't match timestamps ({len(self.timestamps)})"
 
     def save_trajectory(self, task):
-        """Save trajectory data to HDF5 file, compressing camera images"""
+        """Save trajectory data to HDF5 file, images as uint8, other data as float32"""
         self.align_frames()
         self.logger.info(f"Saving trajectory to {self.output_file}...")
         
         def save_images(hf, images, cam_name):
-            hf.create_dataset(cam_name, data=images)
+            # Convert images to uint8 and save with compression
+            images = images.astype(np.uint8)
+            hf.create_dataset(cam_name, data=images, 
+                            compression='lzf',
+                            chunks=(1, images.shape[1], images.shape[2], images.shape[3]),
+                            dtype='u1')
             hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
         
         with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
-            # Save non-image data
-            hf.create_dataset('timestamps', data=np.array(self.timestamps))
-            hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list))
-            hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list))
-            hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list))
-            hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list))
-            hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list))
-            hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list))
-            hf.create_dataset('action', data=np.array(self.action_list))
+            # Save non-image data as float32
+            hf.create_dataset('timestamps', data=np.array(self.timestamps, dtype=np.float32), dtype='f4')
+            hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('action', data=np.array(self.action_list, dtype=np.float32), dtype='f4')
             
             # Save metadata
             hf.attrs['instruction'] = task
@@ -274,10 +279,10 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
 
             if current_input.get('rightHand', 0) > 0.5:
                 if last_input.get('rightHand', 0) <= 0.5:
-                        start_tcp_pos = current_tcp_pos
-                        start_tcp_quat = current_tcp_quat
-                        start_input_pos = current_input_pos
-                        start_input_quat = current_input_quat
+                    start_tcp_pos = current_tcp_pos
+                    start_tcp_quat = current_tcp_quat
+                    start_input_pos = current_input_pos
+                    start_input_quat = current_input_quat
 
                 offset_pos = current_input_pos - start_input_pos
                 offset_quat = quaternion.quaternion.inverse(start_input_quat) * current_input_quat
@@ -320,7 +325,6 @@ if __name__ == "__main__":
     current_date = datetime.now().strftime("%Y-%m-%d")
     default_path = f"../data/flexiv/teleop_recordings/{current_date}/"
     parser.add_argument("--path", type=str, default=default_path, help="Path to save HDF5 files")
-
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
     parser.add_argument("--rgb_width", type=int, default=640, help="RGB image width")
