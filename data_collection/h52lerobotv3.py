@@ -118,13 +118,13 @@ def load_raw_episode_data(
         state = torch.from_numpy(np.hstack([
             ep["tcp_pose"][:, :3],  # x, y, z
             ep["tcp_pose"][:, 3:],  # quaternion w, x, y, z
-            ep["gripper_width"][:, None]  # gripper width
+            ep["gripper_width"][:][:, None]  # gripper width
         ])).float()  # Convert to float32
         action = torch.from_numpy(ep["action"][:]).float()  # Convert to float32
         velocity = torch.from_numpy(np.hstack([
             ep["tcp_velocity"][:, :3],  # velocity x, y, z
             ep["tcp_velocity"][:, 3:],  # angular velocity (3 components)
-            np.zeros_like(ep["gripper_width"][:, None])  # gripper velocity
+            np.zeros_like(ep["gripper_width"][:][:, None])  # gripper velocity
         ])).float()  # Convert to float32
         effort = torch.from_numpy(ep["f_ext_tcp_frame"][:]).float()  # Convert to float32
         imgs_per_cam = load_raw_images_per_camera(ep, [key for key in ep if key.startswith('cam')])
