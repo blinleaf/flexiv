@@ -168,7 +168,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path="./data"):
+def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
     """Main function for teleoperation with recording"""
     logger = spdlog.ConsoleLogger("Main")
     logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
@@ -184,7 +184,6 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
         rgb_size=(rgb_width, rgb_height),
         depth_size=(rgb_width, rgb_height),
         fps=fps,
-        save_path=save_path,
         save_freq=frequency
     )
     
@@ -319,13 +318,16 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, save_path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Teleoperation with trajectory recording")
-    parser.add_argument("--path", type=str, default="./teleop_recordings/", help="Path to save recordings")
+
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    default_path = f"../data/flexiv/teleop_recordings/{current_date}/"
+    parser.add_argument("--path", type=str, default=default_path, help="Path to save HDF5 files")
+
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
     parser.add_argument("--rgb_width", type=int, default=640, help="RGB image width")
     parser.add_argument("--rgb_height", type=int, default=480, help="RGB image height")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second")
-    parser.add_argument("--save_path", type=str, default="./data", help="Path to save RGB-D data")
     args = parser.parse_args()
     main(task=args.task, path=args.path, frequency=args.frequency, 
-         rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps, save_path=args.save_path)
+         rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps)
