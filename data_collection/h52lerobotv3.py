@@ -90,6 +90,15 @@ def load_raw_images_per_camera(ep: h5py.File, cameras: list[str]) -> dict[str, n
             print(f"Warning: Camera {camera} not found in HDF5 file")
             continue
         imgs_array = ep[camera][:]  # Shape: (N, H, W, C)
+        # Convert BGR to RGB if necessary
+        if imgs_array.shape[-1] == 3:
+            imgs_array = imgs_array[..., [2, 1, 0]]  # Swap BGR to RGB
+        # Ensure uint8 and [0, 255]
+        if imgs_array.dtype != np.uint8:
+            if imgs_array.max() <= 1.0:  # Assume normalized [0, 1]
+                imgs_array = (imgs_array * 255).astype(np.uint8)
+            elif imgs_array.max() <= 255.0:  # Assume float [0, 255]
+                imgs_array = imgs_array.astype(np.uint8)
         # Convert to channel-first format (N, C, H, W)
         imgs_array = np.transpose(imgs_array, (0, 3, 1, 2))
         imgs_per_cam[camera] = imgs_array
@@ -127,6 +136,7 @@ def populate_dataset(
 
     for ep_idx in tqdm.tqdm(episodes):
         ep_path = hdf5_files[ep_idx]
+        print(f"Processing HDF5 file: {ep_path}")  # Added print statement
         imgs_per_cam, state, action, effort = load_raw_episode_data(ep_path)
         num_frames = state.shape[0]
         
