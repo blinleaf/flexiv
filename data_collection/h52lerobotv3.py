@@ -158,13 +158,14 @@ def populate_dataset(
                 "action": action[i],
                 "observation.velocity": velocity[i],
                 "observation.effort": effort[i],
+                "task": instruction,
             }
 
             for camera, img_array in imgs_per_cam.items():
                 frame[f"observation.images.{camera}"] = img_array[i]
 
             dataset.add_frame(frame)
-        dataset.save_episode(task=instruction, encode_videos=True)
+        dataset.save_episode(encode_videos=True)
 
     return dataset
 
