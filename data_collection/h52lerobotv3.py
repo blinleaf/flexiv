@@ -121,7 +121,7 @@ def load_raw_episode_data(
         state = torch.from_numpy(np.hstack([
             ep["tcp_pose"][:, :3],  # x, y, z
             ep["tcp_pose"][:, 3:],  # quaternion w, x, y, z
-            ep["gripper_width"][:, None]  # gripper width
+            ep["gripper_width"][:][:, None] # gripper width
         ]))
         action = torch.from_numpy(ep["action"][:])
         velocity = torch.from_numpy(np.hstack([
