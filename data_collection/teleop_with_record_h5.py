@@ -16,7 +16,7 @@ import spdlog
 from datetime import datetime
 
 # Import utility methods
-from utility import quat2eulerZYX, list2str
+from utility import list2str
 
 # Import Flexiv RDK python libraries
 import flexivrdk
@@ -30,19 +30,8 @@ from realsense_record import RealSenseModule, get_rgbd, CameraConfig
 class TrajectoryRecorder:
     def __init__(self, output_file, camera_config=None):
         self.timestamps = []
-        self.q_list = []
-        self.theta_list = []
-        self.dq_list = []
-        self.dtheta_list = []
-        self.tau_list = []
-        self.tau_des_list = []
-        self.tau_dot_list = []
-        self.tau_ext_list = []
         self.tcp_pose_list = []
-        self.tcp_pose_d_list = []
         self.tcp_velocity_list = []
-        self.camera_pose_list = []
-        self.flange_pose_list = []
         self.ft_sensor_raw_list = []
         self.f_ext_tcp_frame_list = []
         self.f_ext_base_frame_list = []
@@ -61,7 +50,7 @@ class TrajectoryRecorder:
         for i in range(self.num_cameras):
             self.camera_images_list[f'cam{i+1}'] = []
 
-    def add_state(self, robot_states, gripper_states, quest_input=None):
+    def add_state(self, robot_states, gripper_states):
         """Add state data for one timestep"""
         if not self.is_recording:
             return
