@@ -125,21 +125,20 @@ class TrajectoryRecorder:
             # Convert images to uint8 and save with compression
             images = images.astype(np.uint8)
             hf.create_dataset(cam_name, data=images, 
-                            compression='lzf',
                             chunks=(1, images.shape[1], images.shape[2], images.shape[3]),
-                            dtype='u1')
+                            dtype='uint8')
             hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
         
         with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
             # Save non-image data as float32
-            hf.create_dataset('timestamps', data=np.array(self.timestamps, dtype=np.float32), dtype='f4')
-            hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list, dtype=np.float32), dtype='f4')
-            hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list, dtype=np.float32), dtype='f4')
-            hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list, dtype=np.float32), dtype='f4')
-            hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list, dtype=np.float32), dtype='f4')
-            hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list, dtype=np.float32), dtype='f4')
-            hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list, dtype=np.float32), dtype='f4')
-            hf.create_dataset('action', data=np.array(self.action_list, dtype=np.float32), dtype='f4')
+            hf.create_dataset('timestamps', data=np.array(self.timestamps, dtype=np.float32))
+            hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list, dtype=np.float32))
+            hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list, dtype=np.float32))
+            hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list, dtype=np.float32))
+            hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list, dtype=np.float32))
+            hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list, dtype=np.float32))
+            hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list, dtype=np.float32))
+            hf.create_dataset('action', data=np.array(self.action_list, dtype=np.float32))
             
             # Save metadata
             hf.attrs['instruction'] = task
