@@ -24,7 +24,8 @@ DEFAULT_DATASET_CONFIG = DatasetConfig()
 
 def create_empty_dataset(
     repo_id: str,
-    robot_type: str = "flexiv_rizon_4s",
+    hdf5_files: list[Path],  # Pass hdf5_files to dynamically get cameras
+    robot_type: str = "flexiv_rizon",
     mode: Literal["video", "image"] = "video",
     *,
     has_velocity: bool = True,
@@ -37,25 +38,23 @@ def create_empty_dataset(
         "gripper_width"
     ]
 
-    cameras = [
-        f"cam{i+1}" for i in range(3)  # Assuming up to 3 cameras as per teleop script
-    ]
+    cameras = get_cameras(hdf5_files)  # Dynamically get camera list
 
     features = {
         "observation.state": {
             "dtype": "float32",
             "shape": (len(motors), ),
-            "names": [motors],
+            "names": motors,  # Fix: Use list directly, not nested
         },
         "action": {
             "dtype": "float32",
             "shape": (len(motors), ),
-            "names": [motors],
+            "names": motors,
         },
         "observation.velocity": {
             "dtype": "float32",
             "shape": (len(motors), ),
-            "names": [motors],
+            "names": motors,
         },
         "observation.effort": {
             "dtype": "float32",
@@ -67,7 +66,7 @@ def create_empty_dataset(
     for cam in cameras:
         features[f"observation.images.{cam}"] = {
             "dtype": mode,
-            "shape": (3, 480, 640),  # As specified in teleop script
+            "shape": (3, 480, 640),  # Channel-first format
             "names": ["channels", "height", "width"],
         }
 
@@ -97,14 +96,12 @@ def has_effort(hdf5_files: list[Path]) -> bool:
 def load_raw_images_per_camera(ep: h5py.File, cameras: list[str]) -> dict[str, np.ndarray]:
     imgs_per_cam = {}
     for camera in cameras:
-        if ep[camera].attrs.get('compression') == 'lzf':
-            imgs_array = ep[camera][:]
-        else:
-            imgs_array = []
-            for data in ep[camera]:
-                data = np.frombuffer(data, np.uint8)
-                imgs_array.append(cv2.imdecode(data, cv2.IMREAD_COLOR))
-            imgs_array = np.array(imgs_array)
+        if camera not in ep:
+            print(f"Warning: Camera {camera} not found in HDF5 file")
+            continue
+        imgs_array = ep[camera][:]  # Shape: (N, H, W, C)
+        # Convert to channel-first format (N, C, H, W)
+        imgs_array = np.transpose(imgs_array, (0, 3, 1, 2))
         imgs_per_cam[camera] = imgs_array
     return imgs_per_cam
 
@@ -121,15 +118,15 @@ def load_raw_episode_data(
         state = torch.from_numpy(np.hstack([
             ep["tcp_pose"][:, :3],  # x, y, z
             ep["tcp_pose"][:, 3:],  # quaternion w, x, y, z
-            ep["gripper_width"][:][:, None] # gripper width
-        ]))
-        action = torch.from_numpy(ep["action"][:])
+            ep["gripper_width"][:, None]  # gripper width
+        ])).float()  # Convert to float32
+        action = torch.from_numpy(ep["action"][:]).float()  # Convert to float32
         velocity = torch.from_numpy(np.hstack([
             ep["tcp_velocity"][:, :3],  # velocity x, y, z
-            ep["tcp_velocity"][:, 3:],  # angular velocity
-            np.zeros_like(ep["gripper_width"][:][:, None])  # no velocity for gripper
-        ]))
-        effort = torch.from_numpy(ep["f_ext_tcp_frame"][:])
+            ep["tcp_velocity"][:, 3:],  # angular velocity (3 components)
+            np.zeros_like(ep["gripper_width"][:, None])  # gripper velocity
+        ])).float()  # Convert to float32
+        effort = torch.from_numpy(ep["f_ext_tcp_frame"][:]).float()  # Convert to float32
         imgs_per_cam = load_raw_images_per_camera(ep, [key for key in ep if key.startswith('cam')])
 
     return imgs_per_cam, state, action, velocity, effort
@@ -184,7 +181,6 @@ def port_teleop_to_lerobot(
     if not raw_dir.exists():
         if raw_repo_id is None:
             raise ValueError("raw_repo_id must be provided if raw_dir does not exist")
-        # download_raw(raw_dir, repo_id=raw_repo_id)
 
     hdf5_files = []
     for root, _, files in os.walk(raw_dir):
@@ -194,7 +190,8 @@ def port_teleop_to_lerobot(
 
     dataset = create_empty_dataset(
         repo_id,
-        robot_type="flexiv_rizon_4s",
+        hdf5_files,  # Pass hdf5_files to dynamically get cameras
+        robot_type="flexiv_rizon",
         mode=mode,
         has_effort=has_effort(hdf5_files),
         has_velocity=has_velocity(hdf5_files),
