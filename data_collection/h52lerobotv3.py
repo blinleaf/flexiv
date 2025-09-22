@@ -186,7 +186,6 @@ def port_teleop_to_lerobot(
         task=task,
         episodes=episodes,
     )
-    dataset.consolidate(run_compute_stats=True)
 
     if push_to_hub:
         dataset.push_to_hub()
