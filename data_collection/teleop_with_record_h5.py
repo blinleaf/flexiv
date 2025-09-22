@@ -122,9 +122,7 @@ class TrajectoryRecorder:
         self.logger.info(f"Saving trajectory to {self.output_file}...")
         
         def save_images(hf, images, cam_name):
-            hf.create_dataset(cam_name, data=images, 
-                            compression='lzf',
-                            chunks=(1, images.shape[1], images.shape[2], images.shape[3]))
+            hf.create_dataset(cam_name, data=images)
             hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
         
         with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
