@@ -127,7 +127,7 @@ def load_raw_episode_data(
         velocity = torch.from_numpy(np.hstack([
             ep["tcp_velocity"][:, :3],  # velocity x, y, z
             ep["tcp_velocity"][:, 3:],  # angular velocity
-            np.zeros_like(ep["gripper_width"][:, None])  # no velocity for gripper
+            np.zeros_like(ep["gripper_width"][:][:, None])  # no velocity for gripper
         ]))
         effort = torch.from_numpy(ep["f_ext_tcp_frame"][:])
         imgs_per_cam = load_raw_images_per_camera(ep, [key for key in ep if key.startswith('cam')])
