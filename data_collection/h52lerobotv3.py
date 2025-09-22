@@ -146,7 +146,7 @@ def populate_dataset(
                 frame[f"observation.images.{camera}"] = img_array[i]
 
             dataset.add_frame(frame)
-        dataset.save_episode(encode_videos=True)
+        dataset.save_episode()
 
     return dataset
 
@@ -179,6 +179,7 @@ def port_teleop_to_lerobot(
         mode=mode,
         has_effort=has_effort(hdf5_files),
         dataset_config=dataset_config,
+        batch_encoding_size=10,  # 可选：批量编码 10 个 episode
     )
     dataset = populate_dataset(
         dataset,
