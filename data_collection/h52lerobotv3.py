@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 from typing import Literal
 import h5py
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 import torch
 import tqdm
