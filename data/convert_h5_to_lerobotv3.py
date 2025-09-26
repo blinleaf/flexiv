@@ -13,6 +13,7 @@ import os
 import fnmatch
 import cv2
 
+
 @dataclasses.dataclass(frozen=True)
 class DatasetConfig:
     use_videos: bool = True
@@ -199,6 +200,7 @@ def port_teleop_to_lerobot(
 
     if push_to_hub:
         dataset.push_to_hub()
+
 
 if __name__ == "__main__":
     tyro.cli(port_teleop_to_lerobot)

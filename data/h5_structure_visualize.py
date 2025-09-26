@@ -1,6 +1,7 @@
 import h5py
 import argparse
 
+
 def print_h5_structure(item, indent=0):
     """
     Recursively print the structure of an HDF5 file with indentation to show hierarchy.
