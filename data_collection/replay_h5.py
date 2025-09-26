@@ -116,7 +116,7 @@ if __name__ == "__main__":
                         help="Serial number of the robot (default: Rizon 4s-063036)")
     parser.add_argument('--gripper_name', type=str, default="GripperDahuanModbus", 
                         help="Name of the gripper (default: GripperDahuanModbus)")
-    parser.add_argument('--h5_file', type=str, default="/home/liyang/data/flexiv/teleop_recordings/2025-09-26/trajectory_20250926_180628.h5",
+    parser.add_argument('--h5_file', type=str, default="/home/liyang/data/flexiv/teleop_recordings/2025-09-26/trajectory_20250926_205354.h5",
                         help="Path to the HDF5 file containing trajectory data")
     args = parser.parse_args()
 
