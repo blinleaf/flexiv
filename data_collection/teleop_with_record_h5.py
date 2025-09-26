@@ -219,7 +219,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         gripper.Enable("GripperDahuanModbus")
         
         logger.info("Opening gripper")
-        gripper.Move(0.1, 0.1, 1)
+        gripper.Move(0.1, 0.1, 50)
         while robot.busy():
             time.sleep(1)
 
