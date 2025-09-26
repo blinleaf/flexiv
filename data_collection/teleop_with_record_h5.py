@@ -194,7 +194,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
 
     try:
         # RDK Initialization
-        robot = flexivrdk.Robot("Rizon 4s-063034")
+        robot = flexivrdk.Robot("Rizon 4s-063036")
         if robot.fault():
             logger.warn("Fault on robot server, trying to clear...")
             robot.ClearFault()
