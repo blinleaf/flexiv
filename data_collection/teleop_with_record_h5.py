@@ -219,7 +219,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         gripper.Enable("GripperDahuanModbus")
         
         logger.info("Opening gripper")
-        gripper.Move(0.1, 0.1, 5)
+        gripper.Move(0.1, 0.1, 1)
         while robot.busy():
             time.sleep(1)
 
@@ -289,7 +289,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
                 quat = start_tcp_quat * offset_quat
                 robot.SendCartesianMotionForce([*pos, quat.w, quat.x, quat.y, quat.z], [0.0] * 6)
                 gripper_close = 0.09 * (1 - current_input.get('rightIndex', 0)) + 0.01
-                gripper.Move(gripper_close, 0.2, 20)
+                gripper.Move(gripper_close, 0.1, 50)
                 recorder.add_action(pos, quat, gripper_close)
             else:
                 recorder.add_action(current_tcp_pos, current_tcp_quat, gripper_states.width)
