@@ -5,7 +5,6 @@ import argparse
 import spdlog
 import flexivrdk
 import numpy as np
-from scipy.spatial.transform import Rotation import R
 import h5py
 
 
