@@ -58,13 +58,16 @@ def main(args):
             time.sleep(0.1)
         logger.info("Home plan completed")
 
-        # Zero force/torque sensors
         robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
-        logger.warn("Zeroing force/torque sensors. Ensure no contact with the robot.")
+        logger.warn(
+            "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
+        )
         while not robot.primitive_states()["terminated"]:
             time.sleep(0.1)
-        logger.info("Force/torque sensor zeroing completed")
+        logger.info("Sensor zeroing complete")
+
+        robot.SwitchMode(mode.NRT_CARTESIAN_MOTION_FORCE)
 
         # Load trajectory from HDF5 file
         logger.info(f"Loading trajectory from {args.h5_file}...")
