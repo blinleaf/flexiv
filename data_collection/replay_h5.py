@@ -83,7 +83,7 @@ def main(args):
                 [0.0] * 6,
             )
             gripper.Move(gripper_width, 0.1, 50)
-            time.sleep(0.1)
+            time.sleep(1 / 30)  # Adjust based on trajectory timing
 
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
