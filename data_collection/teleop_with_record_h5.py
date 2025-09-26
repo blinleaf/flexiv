@@ -216,7 +216,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         logger.info("Robot operational")
         
         gripper = flexivrdk.Gripper(robot)
-        gripper.Enable("Flexiv-GN01")
+        gripper.Enable("GripperDahuanModbus")
         
         logger.info("Opening gripper")
         gripper.Move(0.1, 0.2, 20)
