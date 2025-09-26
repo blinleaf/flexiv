@@ -243,6 +243,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
 
         last_input = None
         frame_cnt = 0
+        is_initialized = False
         last_robot_states, last_tcp_pos, last_tcp_quat, last_gripper_states = get_cur_pose(robot, gripper)
 
         while True:
@@ -262,6 +263,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
 
             if last_input is None:
                 last_input = current_input
+                continue
 
             recorder.add_state(robot_states, gripper_states)
             current_tcp_pose = robot_states.tcp_pose
@@ -277,11 +279,13 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
                                                     current_input['rightRot']["y"])
 
             if current_input.get('rightHand', 0) > 0.5:
-                if last_input.get('rightHand', 0) <= 0.5:
+                if not is_initialized:
                     start_tcp_pos = current_tcp_pos
                     start_tcp_quat = current_tcp_quat
                     start_input_pos = current_input_pos
                     start_input_quat = current_input_quat
+                    is_initialized = True
+                    logger.info("Start to teleoperate...")
 
                 offset_pos = current_input_pos - start_input_pos
                 offset_quat = quaternion.quaternion.inverse(start_input_quat) * current_input_quat
@@ -293,6 +297,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
                 recorder.add_action(pos, quat, gripper_close)
             else:
                 recorder.add_action(current_tcp_pos, current_tcp_quat, gripper_states.width)
+                is_initialized = False
 
             last_input = current_input
             frame_cnt += 1
