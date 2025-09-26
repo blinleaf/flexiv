@@ -198,7 +198,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         if robot.fault():
             logger.warn("Fault on robot server, trying to clear...")
             robot.ClearFault()
-            time.sleep(2)
+            time.sleep(0.1)
             if robot.fault():
                 logger.error("Fault cannot be cleared, exiting...")
                 return
@@ -208,7 +208,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         robot.Enable()
         seconds_waited = 0
         while not robot.operational():
-            time.sleep(1)
+            time.sleep(0.1)
             seconds_waited += 1
             if seconds_waited == 10:
                 logger.warn("Robot not operational, check: 1) no fault, 2) in Auto (remote) mode")
@@ -221,13 +221,13 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         logger.info("Opening gripper")
         gripper.Move(0.1, 0.1, 50)
         while robot.busy():
-            time.sleep(1)
+            time.sleep(0.1)
 
         robot.SwitchMode(mode.NRT_PLAN_EXECUTION)
         robot.ExecutePlan("PLAN-Home")
         # Wait for the plan to finish
         while robot.busy():
-            time.sleep(1)
+            time.sleep(0.1)
 
         robot.SwitchMode(mode.NRT_PRIMITIVE_EXECUTION)
         robot.ExecutePrimitive("ZeroFTSensor", dict())
@@ -235,7 +235,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
             "Zeroing force/torque sensors, make sure nothing is in contact with the robot"
         )
         while not robot.primitive_states()["terminated"]:
-            time.sleep(1)
+            time.sleep(0.1)
         logger.info("Sensor zeroing complete")
 
         robot.SwitchMode(mode.NRT_CARTESIAN_MOTION_FORCE)
@@ -311,7 +311,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         robot.ExecutePlan("PLAN-Home")
         # Wait for the plan to finish
         while robot.busy():
-            time.sleep(0.02)
+            time.sleep(0.1)
 
         recorder.cameras.cleanup()
         recorder.save_trajectory(task)
