@@ -37,6 +37,7 @@ class TrajectoryRecorder:
         self.f_ext_base_frame_list = []
         self.gripper_width_list = []
         self.camera_images_list = {}
+        self.camera_timestamps = []  # Camera capture timestamps
         self.action_list = []
 
         self.output_file = output_file
@@ -64,21 +65,41 @@ class TrajectoryRecorder:
             self.f_ext_base_frame_list.append([float(i) for i in robot_states.ext_wrench_in_world])
             self.gripper_width_list.append(float(gripper_states.width))
 
-            camera_data = get_rgbd(self.cameras)
-            if len(camera_data) != self.num_cameras:
-                self.logger.error(f"Expected {self.num_cameras} camera feeds, but got {len(camera_data)}")
-                return
-            for i, (image, _, _) in enumerate(camera_data):
-                cam_key = f'cam{i+1}'
-                if cam_key not in self.camera_images_list:
-                    self.logger.warn(f"Camera key {cam_key} not initialized, creating now")
-                    self.camera_images_list[cam_key] = []
-                self.camera_images_list[cam_key].append(np.array(image, copy=True))
-
         except KeyboardInterrupt:
             raise
         except Exception as e:
             self.logger.error(f"Error adding state data: {str(e)}")
+            
+    def add_camera_data(self):
+        try:
+            camera_timestamp = time.time()  # Capture timestamp before getting data
+            camera_data = get_rgbd(self.cameras)
+            if len(camera_data) != self.num_cameras:
+                self.logger.error(f"Expected {self.num_cameras} camera feeds, but got {len(camera_data)}")
+                return
+            
+            self.camera_timestamps.append(camera_timestamp)
+            
+            # Multi-threaded image copying
+            def copy_image(idx, img):
+                cam_key = f'cam{idx+1}'
+                if cam_key not in self.camera_images_list:
+                    self.logger.warn(f"Camera key {cam_key} not initialized, creating now")
+                    self.camera_images_list[cam_key] = []
+                self.camera_images_list[cam_key].append(np.array(img, copy=True))
+            
+            threads = []
+            for i, (image, _, _) in enumerate(camera_data):
+                t = threading.Thread(target=copy_image, args=(i, image))
+                threads.append(t)
+                t.start()
+            
+            for t in threads:
+                t.join()
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            self.logger.error(f"Error adding camera data: {str(e)}")
 
     def add_action(self, offset_pos, offset_quat, gripper_close):
         """Add action data for one timestep"""
@@ -94,16 +115,21 @@ class TrajectoryRecorder:
         """Align all data arrays to the same length"""
         min_length = min(len(self.timestamps), 
                         len(self.action_list) + 1, 
+                        len(self.camera_timestamps) + 1,
                         *[len(self.camera_images_list[f'cam{i+1}']) + 1 for i in range(self.num_cameras)])
         
         if len(self.action_list) < min_length:
             self.action_list.append(self.action_list[-1])
         
+        if len(self.camera_timestamps) < min_length:
+            if len(self.camera_timestamps) > 0:
+                self.camera_timestamps.append(self.camera_timestamps[-1])
+        
         for cam_name in self.camera_images_list:
             if len(self.camera_images_list[cam_name]) < min_length:
                 self.camera_images_list[cam_name].append(self.camera_images_list[cam_name][-1])
 
-        for attr in ['timestamps', 'action_list']:
+        for attr in ['timestamps', 'action_list', 'camera_timestamps']:
             setattr(self, attr, getattr(self, attr)[:min_length])
 
         for cam_name in self.camera_images_list:
@@ -132,6 +158,7 @@ class TrajectoryRecorder:
         with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
             # Save non-image data as float32
             hf.create_dataset('timestamps', data=np.array(self.timestamps, dtype=np.float32))
+            hf.create_dataset('camera_timestamps', data=np.array(self.camera_timestamps, dtype=np.float32))
             hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list, dtype=np.float32))
             hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list, dtype=np.float32))
             hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list, dtype=np.float32))
@@ -266,6 +293,8 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
                 continue
 
             recorder.add_state(robot_states, gripper_states)
+            recorder.add_camera_data()
+            
             current_tcp_pose = robot_states.tcp_pose
             current_tcp_pos = np.array(current_tcp_pose[:3])
             current_tcp_quat = quaternion.quaternion(*current_tcp_pose[3:])
@@ -293,8 +322,9 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
                 quat = start_tcp_quat * offset_quat
                 robot.SendCartesianMotionForce([*pos, quat.w, quat.x, quat.y, quat.z], [0.0] * 6)
                 gripper_close = 0.09 * (1 - current_input.get('rightIndex', 0)) + 0.01
-                gripper.Move(gripper_close, 0.1, 50)
                 recorder.add_action(pos, quat, gripper_close)
+                gripper.Move(gripper_close, 0.1, 50)
+                
             else:
                 recorder.add_action(current_tcp_pos, current_tcp_quat, gripper_states.width)
                 is_initialized = False
