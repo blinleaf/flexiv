@@ -414,7 +414,13 @@ class TrajectoryRecorder:
         # Get video properties
         fps = self._camera_fps
         height, width = self.image_shape[:2]
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        
+        # Try different codecs in order of preference
+        codecs_to_try = [
+            ('avc1', 'H.264'),  # Best compatibility
+            ('mp4v', 'MPEG-4'), # Fallback
+            ('XVID', 'Xvid'),   # Another fallback
+        ]
         
         # Get base path from output file
         base_path = os.path.splitext(self.output_file)[0]
@@ -426,30 +432,46 @@ class TrajectoryRecorder:
             cam_name = f'cam{i+1}'
             video_path = f"{base_path}_{cam_name}.mp4"
             
+            video_writer = None
+            success = False
+            
             try:
-                # Create video writer
-                video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
-                
-                if not video_writer.isOpened():
-                    self.logger.error(f"Failed to create video writer for {cam_name}")
-                    continue
-                
                 images = self.camera_images_list[cam_name]
                 valid_mask = self.camera_valid_list[cam_name]
                 
-                # Write frames
-                for frame_idx, (image, is_valid) in enumerate(zip(images, valid_mask)):
-                    # Convert RGB to BGR for OpenCV
-                    if len(image.shape) == 3 and image.shape[2] == 3:
-                        bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                if len(images) == 0:
+                    self.logger.warn(f"{cam_name}: No frames to save")
+                    continue
+                
+                # Try different codecs until one works
+                for codec_code, codec_name in codecs_to_try:
+                    fourcc = cv2.VideoWriter_fourcc(*codec_code)
+                    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+                    
+                    if video_writer.isOpened():
+                        self.logger.info(f"  {cam_name}: Using {codec_name} codec")
+                        success = True
+                        break
                     else:
-                        bgr_image = image
+                        video_writer.release()
+                
+                if not success:
+                    self.logger.error(f"  {cam_name}: Failed to create video writer with any codec")
+                    continue
+                
+                # Write frames
+                frames_written = 0
+                for frame_idx, (image, is_valid) in enumerate(zip(images, valid_mask)):
+                    # Ensure image is uint8
+                    if image.dtype != np.uint8:
+                        image = image.astype(np.uint8)
+                    
+                    # RealSense returns BGR format already, no conversion needed
+                    bgr_image = image.copy()
                     
                     # Add red border for invalid frames (dropped frames)
                     if not is_valid:
-                        # Draw red border on placeholder frames
                         border_thickness = 10
-                        bgr_image = bgr_image.copy()
                         cv2.rectangle(bgr_image, 
                                     (0, 0), 
                                     (width-1, height-1), 
@@ -461,17 +483,33 @@ class TrajectoryRecorder:
                                   cv2.FONT_HERSHEY_SIMPLEX, 
                                   1.5, (0, 0, 255), 3)
                     
+                    # Ensure correct shape (H, W, 3)
+                    if len(bgr_image.shape) != 3 or bgr_image.shape[2] != 3:
+                        self.logger.warn(f"  {cam_name}: Frame {frame_idx} has invalid shape {bgr_image.shape}, skipping")
+                        continue
+                    
                     video_writer.write(bgr_image)
+                    frames_written += 1
                 
                 video_writer.release()
                 
-                valid_count = sum(valid_mask)
-                total_count = len(valid_mask)
-                self.logger.info(f"  {cam_name}: Saved {total_count} frames ({valid_count} valid) to {video_path}")
+                # Verify file was created
+                if os.path.exists(video_path):
+                    file_size = os.path.getsize(video_path)
+                    if file_size > 1000:  # At least 1KB
+                        valid_count = sum(valid_mask)
+                        self.logger.info(f"  {cam_name}: Saved {frames_written} frames ({valid_count} valid) to {video_path} ({file_size/1024/1024:.2f} MB)")
+                    else:
+                        self.logger.error(f"  {cam_name}: Video file is too small ({file_size} bytes), may be corrupted")
+                else:
+                    self.logger.error(f"  {cam_name}: Video file was not created")
                 
             except Exception as e:
-                self.logger.error(f"Error saving video for {cam_name}: {str(e)}")
-                if 'video_writer' in locals():
+                self.logger.error(f"  {cam_name}: Error saving video: {str(e)}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                if video_writer is not None:
                     video_writer.release()
 
 def get_cur_pose(robot, gripper):
