@@ -315,11 +315,15 @@ class TrajectoryRecorder:
         # Stop state thread
         self.stop_state_thread()
         
-        # Stop camera thread
+        # Stop camera thread first
         self._camera_running = False
         if self._camera_thread.is_alive():
             self._camera_thread.join(timeout=2.0)
         self.logger.info("Camera thread stopped")
+        
+        # Then cleanup camera pipelines (must be after thread stops)
+        self.cameras.cleanup()
+        self.logger.info("Camera pipelines cleaned up")
         
         self.align_frames()
         self.logger.info(f"Saving trajectory to {self.output_file}...")
@@ -644,7 +648,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         while robot.busy():
             time.sleep(0.1)
 
-        recorder.cameras.cleanup()
+        # Save trajectory (this will stop threads and cleanup cameras in correct order)
         recorder.save_trajectory(task)
         logger.info(f"Trajectory saved to {recorder.output_file}")
 
