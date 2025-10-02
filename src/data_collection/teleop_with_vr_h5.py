@@ -13,6 +13,7 @@ import os
 import numpy as np
 import h5py
 import spdlog
+import cv2
 from datetime import datetime
 
 # Import utility methods
@@ -38,6 +39,7 @@ class TrajectoryRecorder:
         self.gripper_width_list = []
         self.camera_images_list = {}
         self.camera_timestamps = []  # Camera capture timestamps (~30Hz)
+        self.camera_valid_list = {}  # Valid mask for each camera frame
         self.action_list = []
         self.action_timestamps = []  # Action timestamps (~30Hz, from main loop)
 
@@ -50,8 +52,19 @@ class TrajectoryRecorder:
         # Initialize lists for each camera
         self.num_cameras = len(self.cameras.serial_numbers)
         self.logger.info(f"Initialized {self.num_cameras} cameras")
+        
+        # Get image shape by capturing one frame
+        try:
+            test_data = get_rgbd(self.cameras)
+            self.image_shape = test_data[0][0].shape  # (H, W, C)
+            self.logger.info(f"Camera image shape: {self.image_shape}")
+        except Exception as e:
+            self.logger.error(f"Failed to get image shape: {e}")
+            self.image_shape = (480, 640, 3)  # Default shape
+            
         for i in range(self.num_cameras):
             self.camera_images_list[f'cam{i+1}'] = []
+            self.camera_valid_list[f'cam{i+1}'] = []
         
         # Start background camera thread
         self._camera_lock = threading.Lock()
@@ -73,38 +86,69 @@ class TrajectoryRecorder:
         self.gripper = None
     
     def _camera_loop(self):
-        """Background camera capture loop running at fixed fps"""
+        """Background camera capture loop running at fixed fps
+        
+        Uses zero-value placeholders for dropped frames and tracks validity with camera_valid_list.
+        """
         interval = 1.0 / self._camera_fps
+        zero_placeholder = np.zeros(self.image_shape, dtype=np.uint8)
+        dropped_count = 0
+        total_count = 0
+        
         while self._camera_running:
             loop_start = time.time()
+            timestamp = time.time()
+            
+            # Try to capture from all cameras
+            camera_data = None
+            camera_valid = [False] * self.num_cameras
+            
             try:
-                timestamp = time.time()
                 camera_data = get_rgbd(self.cameras)
                 
-                # Multi-threaded image copying
-                copied_images = [None] * len(camera_data)
+                # Validate camera_data
+                if camera_data is None or len(camera_data) != self.num_cameras:
+                    raise RuntimeError(f"Expected {self.num_cameras} cameras, got {len(camera_data) if camera_data else 0}")
                 
-                def copy_image(idx, img):
-                    copied_images[idx] = np.array(img, copy=True)
-                
-                threads = []
-                for i, (image, _, _) in enumerate(camera_data):
-                    t = threading.Thread(target=copy_image, args=(i, image))
-                    threads.append(t)
-                    t.start()
-                
-                for t in threads:
-                    t.join()
-                
-                # Append to lists after all copies are done
-                with self._camera_lock:
-                    self.camera_timestamps.append(timestamp)
-                    for i in range(len(copied_images)):
-                        cam_key = f'cam{i+1}'
-                        self.camera_images_list[cam_key].append(copied_images[i])
-                
+                # Mark which cameras have valid data
+                for i in range(len(camera_data)):
+                    if camera_data[i][0] is not None:
+                        camera_valid[i] = True
+                    
             except Exception as e:
-                self.logger.error(f"Camera thread error: {str(e)}")
+                self.logger.warn(f"Camera capture failed: {str(e)}, using placeholders for all cameras")
+                camera_data = None
+                camera_valid = [False] * self.num_cameras
+            
+            # Prepare images (valid data or zero placeholder)
+            copied_images = []
+            for i in range(self.num_cameras):
+                if camera_valid[i] and camera_data is not None:
+                    try:
+                        image = np.array(camera_data[i][0], copy=True)
+                        copied_images.append(image)
+                    except Exception as e:
+                        self.logger.warn(f"Camera {i+1} copy failed: {e}, using placeholder")
+                        copied_images.append(zero_placeholder.copy())
+                        camera_valid[i] = False
+                else:
+                    copied_images.append(zero_placeholder.copy())
+                    camera_valid[i] = False
+            
+            # Atomically append to all lists
+            with self._camera_lock:
+                self.camera_timestamps.append(timestamp)
+                for i in range(self.num_cameras):
+                    cam_key = f'cam{i+1}'
+                    self.camera_images_list[cam_key].append(copied_images[i])
+                    self.camera_valid_list[cam_key].append(camera_valid[i])
+            
+            # Statistics
+            total_count += 1
+            if not any(camera_valid):
+                dropped_count += 1
+                if dropped_count % 10 == 0:
+                    self.logger.warn(f"Camera frames dropped: {dropped_count}/{total_count}")
             
             # Sleep to maintain fps
             elapsed = time.time() - loop_start
@@ -229,10 +273,9 @@ class TrajectoryRecorder:
         self.action_timestamps.append(timestamp)
 
     def align_frames(self):
-        """Align all data arrays to the same length
+        """Validate data consistency across all streams
         
-        Note: This method is no longer needed with independent timestamps for each data stream,
-        but kept for validation purposes.
+        Checks that each data stream has matching timestamps and data lengths.
         """
         # Validate that each data stream has matching timestamps and data
         assert len(self.action_list) == len(self.action_timestamps), \
@@ -241,15 +284,31 @@ class TrajectoryRecorder:
         assert len(self.timestamps) == len(self.tcp_pose_list), \
             f"State timestamps length ({len(self.timestamps)}) doesn't match state data ({len(self.tcp_pose_list)})"
         
+        # Validate camera data consistency
         for i in range(self.num_cameras):
             cam_name = f'cam{i+1}'
             assert len(self.camera_images_list[cam_name]) == len(self.camera_timestamps), \
                 f"{cam_name} image length ({len(self.camera_images_list[cam_name])}) doesn't match camera timestamps ({len(self.camera_timestamps)})"
+            assert len(self.camera_valid_list[cam_name]) == len(self.camera_timestamps), \
+                f"{cam_name} valid mask length ({len(self.camera_valid_list[cam_name])}) doesn't match camera timestamps ({len(self.camera_timestamps)})"
+        
+        # Check all cameras have the same length
+        cam_lengths = [len(self.camera_images_list[f'cam{i+1}']) for i in range(self.num_cameras)]
+        assert len(set(cam_lengths)) == 1, \
+            f"Camera image lengths are inconsistent: {cam_lengths}"
+        
+        # Calculate valid frame statistics
+        total_camera_frames = len(self.camera_timestamps)
+        valid_counts = {f'cam{i+1}': sum(self.camera_valid_list[f'cam{i+1}']) for i in range(self.num_cameras)}
         
         self.logger.info(f"Data validation passed: "
                         f"States: {len(self.timestamps)}, "
                         f"Actions: {len(self.action_list)}, "
-                        f"Camera: {len(self.camera_timestamps)}")
+                        f"Camera frames: {total_camera_frames}")
+        
+        for cam_name, valid_count in valid_counts.items():
+            drop_rate = (1 - valid_count / max(total_camera_frames, 1)) * 100
+            self.logger.info(f"{cam_name}: {valid_count}/{total_camera_frames} valid ({drop_rate:.2f}% dropped)")
 
     def save_trajectory(self, task):
         """Save trajectory data to HDF5 file, images as uint8, other data as float32"""
@@ -265,12 +324,14 @@ class TrajectoryRecorder:
         self.align_frames()
         self.logger.info(f"Saving trajectory to {self.output_file}...")
         
-        def save_images(hf, images, cam_name):
+        def save_images(hf, images, valid_mask, cam_name):
             # Convert images to uint8 and save with compression
             images = images.astype(np.uint8)
             hf.create_dataset(cam_name, data=images, 
                             chunks=(1, images.shape[1], images.shape[2], images.shape[3]),
                             dtype='uint8')
+            # Save valid mask as bool array
+            hf.create_dataset(f'{cam_name}_valid', data=np.array(valid_mask, dtype=bool))
             hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
         
         with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
@@ -299,12 +360,22 @@ class TrajectoryRecorder:
             hf.attrs['creation_date'] = time.strftime("%Y-%m-%d %H:%M:%S")
             hf.attrs['num_cameras'] = self.num_cameras
             
+            # Save per-camera statistics
+            for i in range(self.num_cameras):
+                cam_name = f'cam{i+1}'
+                valid_count = sum(self.camera_valid_list[cam_name])
+                total_count = len(self.camera_valid_list[cam_name])
+                hf.attrs[f'{cam_name}_valid_frames'] = valid_count
+                hf.attrs[f'{cam_name}_total_frames'] = total_count
+                hf.attrs[f'{cam_name}_drop_rate'] = (total_count - valid_count) / max(total_count, 1)
+            
             # Save images asynchronously
             threads = []
             for i in range(self.num_cameras):
                 cam_name = f'cam{i+1}'
                 images = np.array(self.camera_images_list[cam_name])
-                thread = threading.Thread(target=save_images, args=(hf, images, cam_name))
+                valid_mask = self.camera_valid_list[cam_name]
+                thread = threading.Thread(target=save_images, args=(hf, images, valid_mask, cam_name))
                 threads.append(thread)
                 thread.start()
             
@@ -312,11 +383,92 @@ class TrajectoryRecorder:
             for thread in threads:
                 thread.join()
         
+        # Calculate overall camera statistics
+        total_camera_frames = len(self.camera_timestamps)
+        valid_counts = {f'cam{i+1}': sum(self.camera_valid_list[f'cam{i+1}']) for i in range(self.num_cameras)}
+        
         self.logger.info(f"Task: {task}, "
                         f"State frames: {len(self.timestamps)}, "
                         f"Action frames: {len(self.action_timestamps)}, "
-                        f"Camera frames: {len(self.camera_timestamps)}, "
+                        f"Camera frames: {total_camera_frames}, "
                         f"Saved to: {self.output_file}")
+        
+        for cam_name, valid_count in valid_counts.items():
+            drop_count = total_camera_frames - valid_count
+            drop_rate = (drop_count / max(total_camera_frames, 1)) * 100
+            self.logger.info(f"  {cam_name}: {valid_count}/{total_camera_frames} valid, {drop_count} dropped ({drop_rate:.2f}%)")
+        
+        # Save MP4 videos for each camera
+        self._save_camera_videos()
+    
+    def _save_camera_videos(self):
+        """Save camera images as MP4 videos for each camera"""
+        if len(self.camera_timestamps) == 0:
+            self.logger.warn("No camera frames to save as video")
+            return
+        
+        # Get video properties
+        fps = self._camera_fps
+        height, width = self.image_shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        
+        # Get base path from output file
+        base_path = os.path.splitext(self.output_file)[0]
+        
+        self.logger.info(f"Saving camera videos at {fps} fps...")
+        
+        # Save each camera as separate MP4
+        for i in range(self.num_cameras):
+            cam_name = f'cam{i+1}'
+            video_path = f"{base_path}_{cam_name}.mp4"
+            
+            try:
+                # Create video writer
+                video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+                
+                if not video_writer.isOpened():
+                    self.logger.error(f"Failed to create video writer for {cam_name}")
+                    continue
+                
+                images = self.camera_images_list[cam_name]
+                valid_mask = self.camera_valid_list[cam_name]
+                
+                # Write frames
+                for frame_idx, (image, is_valid) in enumerate(zip(images, valid_mask)):
+                    # Convert RGB to BGR for OpenCV
+                    if len(image.shape) == 3 and image.shape[2] == 3:
+                        bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    else:
+                        bgr_image = image
+                    
+                    # Add red border for invalid frames (dropped frames)
+                    if not is_valid:
+                        # Draw red border on placeholder frames
+                        border_thickness = 10
+                        bgr_image = bgr_image.copy()
+                        cv2.rectangle(bgr_image, 
+                                    (0, 0), 
+                                    (width-1, height-1), 
+                                    (0, 0, 255), 
+                                    border_thickness)
+                        # Add text
+                        cv2.putText(bgr_image, "DROPPED FRAME", 
+                                  (width//2 - 150, height//2), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 
+                                  1.5, (0, 0, 255), 3)
+                    
+                    video_writer.write(bgr_image)
+                
+                video_writer.release()
+                
+                valid_count = sum(valid_mask)
+                total_count = len(valid_mask)
+                self.logger.info(f"  {cam_name}: Saved {total_count} frames ({valid_count} valid) to {video_path}")
+                
+            except Exception as e:
+                self.logger.error(f"Error saving video for {cam_name}: {str(e)}")
+                if 'video_writer' in locals():
+                    video_writer.release()
 
 def get_cur_pose(robot, gripper):
     """Get current robot and gripper pose"""
