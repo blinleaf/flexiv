@@ -485,7 +485,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30):
         import traceback
         traceback.print_exc()
     finally:
-        recorder.align_frames()
+        # recorder.align_frames()
         robot.SwitchMode(mode.NRT_PLAN_EXECUTION)
         robot.ExecutePlan("PLAN-Home")
         # Wait for the plan to finish
