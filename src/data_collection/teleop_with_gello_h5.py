@@ -62,7 +62,7 @@ class TrajectoryRecorder:
             self.logger.info(f"Camera image shape: {self.image_shape}")
         except Exception as e:
             self.logger.error(f"Failed to get image shape: {e}")
-            self.image_shape = (480, 640, 3)  # Default shape
+            self.image_shape = (424, 240, 3)  # Default shape
             
         for i in range(self.num_cameras):
             self.camera_images_list[f'cam{i+1}'] = []
@@ -523,7 +523,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False):
+def main(task, path, frequency, rgb_width=424, rgb_height=240, fps=30, gui=False):
     """Main function for teleoperation with recording"""
     logger = spdlog.ConsoleLogger("Main")
     logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
@@ -691,8 +691,8 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default=default_path, help="Path to save HDF5 files")
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
-    parser.add_argument("--rgb_width", type=int, default=640, help="RGB image width")
-    parser.add_argument("--rgb_height", type=int, default=480, help="RGB image height")
+    parser.add_argument("--rgb_width", type=int, default=424, help="RGB image width")
+    parser.add_argument("--rgb_height", type=int, default=240, help="RGB image height")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second")
     parser.add_argument("--GUI", type=bool, default=False, help="Enable pybullet GUI")
 

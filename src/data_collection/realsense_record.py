@@ -13,8 +13,8 @@ from dataclasses import dataclass
 class CameraConfig:
     """Configuration parameters for the camera setup"""
     real_time_view: bool = False
-    rgb_size: Tuple[int, int] = (640, 480)
-    depth_size: Tuple[int, int] = (640, 480)
+    rgb_size: Tuple[int, int] = (424, 240)
+    depth_size: Tuple[int, int] = (424, 240)
     fps: int = 30
     save_path: str = './realsense/rgbd'
     save_freq: int = 10
