@@ -74,7 +74,7 @@ def main(args):
         with h5py.File(args.h5_file, 'r') as f:
             traj_pose = f['tcp_pose'][:]
             traj_gripper = f['gripper_width'][:]
-
+        import pdb; pdb.set_trace()
         # Execute trajectory
         logger.info("Executing trajectory...")
         for pose, gripper_width in zip(traj_pose, traj_gripper):
