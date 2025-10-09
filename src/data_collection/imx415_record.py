@@ -4,7 +4,7 @@ import numpy as np
 import time
 import argparse
 from typing import Tuple, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -15,7 +15,7 @@ class IMX415CameraConfig:
     fps: int = 30
     save_path: str = './imx415/images'
     save_freq: int = 10
-    device_paths: List[str] = None  # 摄像头设备路径列表，如 ['/dev/video0', '/dev/video1']
+    device_paths: Optional[List[str]] = field(default=None)  # 摄像头设备路径列表，如 ['/dev/video0', '/dev/video1']
     fourcc: str = 'MJPG'  # 视频编码格式
     buffer_size: int = 1  # 缓冲区大小
 
@@ -28,12 +28,12 @@ class IMX415Module:
         self.captures = []
         self.device_count = 0
         
-        # 如果没有指定设备路径，自动检测可用摄像头
+        # 如果没有指定设备路径，使用默认路径
         if config.device_paths is None:
-            self.config.device_paths = self._detect_cameras()
+            print("未指定设备路径，使用默认设备 /dev/video0")
+            self.config.device_paths = ["/dev/video0"]
         
-        if not self.config.device_paths:
-            raise RuntimeError("No IMX415 cameras detected")
+        print(f"使用摄像头设备: {self.config.device_paths}")
         
         # 初始化所有摄像头
         self._setup_cameras()
@@ -44,23 +44,6 @@ class IMX415Module:
                 device_name = os.path.basename(self.config.device_paths[i])
                 cv2.namedWindow(f"IMX415_{device_name}", cv2.WINDOW_AUTOSIZE)
     
-    def _detect_cameras(self) -> List[str]:
-        """自动检测可用的摄像头设备"""
-        available_cameras = []
-        # 检测前8个设备号
-        for i in range(8):
-            device_path = f"/dev/video{i}"
-            # 检查设备文件是否存在
-            if os.path.exists(device_path):
-                cap = cv2.VideoCapture(device_path)
-                if cap.isOpened():
-                    # 尝试读取一帧来确认摄像头可用
-                    ret, _ = cap.read()
-                    if ret:
-                        available_cameras.append(device_path)
-                        print(f"检测到摄像头设备: {device_path}")
-                cap.release()
-        return available_cameras
     
     def _setup_cameras(self):
         """设置所有摄像头"""
@@ -96,7 +79,12 @@ class IMX415Module:
         
         self.device_count = len(self.captures)
         if self.device_count == 0:
-            raise RuntimeError("没有成功初始化任何摄像头")
+            error_msg = f"无法初始化摄像头设备: {self.config.device_paths}\n"
+            error_msg += "请确认:\n"
+            error_msg += "1. 设备路径是否正确\n"
+            error_msg += "2. 摄像头权限是否足够: sudo chmod 666 /dev/video*\n" 
+            error_msg += "3. 设备是否被其他程序占用"
+            raise RuntimeError(error_msg)
     
     def get_camera_info(self, cap_index: int = 0) -> dict:
         """获取摄像头信息"""
@@ -271,6 +259,12 @@ if __name__ == '__main__':
         cv2.destroyAllWindows()
 
 # 使用示例:
-# python imx415_record.py --real-time-view --width 1920 --height 1080 --fps 30 --save-path ./data/imx415
-# python imx415_record.py --device-paths /dev/video0 /dev/video2 --real-time-view  # 指定使用特定设备
-# python imx415_record.py --device-paths /dev/video0 --real-time-view  # 使用单个设备
+# 使用默认设备 /dev/video0:
+# python imx415_record.py --real-time-view
+
+# 指定特定设备:
+# python imx415_record.py --device-paths /dev/video0 --real-time-view  
+# python imx415_record.py --device-paths /dev/video0 /dev/video2 --real-time-view  # 多个设备
+
+# 完整参数示例:
+# python imx415_record.py --device-paths /dev/video0 --real-time-view --width 1920 --height 1080 --fps 30
