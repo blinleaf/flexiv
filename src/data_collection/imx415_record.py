@@ -50,10 +50,50 @@ class IMX415Module:
     def _setup_cameras(self):
         """设置所有摄像头"""
         for device_path in self.config.device_paths:
-            cap = cv2.VideoCapture(device_path)
+            print(f"尝试打开设备: {device_path}")
             
-            if not cap.isOpened():
-                print(f"警告: 无法打开摄像头设备 {device_path}")
+            # 尝试两种方式：设备路径和设备号
+            cap = None
+            success = False
+            
+            # 方式1: 直接使用设备路径
+            try:
+                cap = cv2.VideoCapture(device_path)
+                if cap.isOpened():
+                    # 尝试读取一帧来验证
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        print(f"✅ 使用设备路径成功: {device_path}")
+                        success = True
+                    else:
+                        cap.release()
+                        cap = None
+            except:
+                if cap:
+                    cap.release()
+                cap = None
+            
+            # 方式2: 使用设备号
+            if not success:
+                try:
+                    device_num = int(device_path.split('video')[1])
+                    print(f"尝试使用设备号: {device_num}")
+                    cap = cv2.VideoCapture(device_num)
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            print(f"✅ 使用设备号成功: {device_num}")
+                            success = True
+                        else:
+                            cap.release()
+                            cap = None
+                except:
+                    if cap:
+                        cap.release()
+                    cap = None
+            
+            if not success:
+                print(f"❌ 无法打开摄像头设备 {device_path}")
                 continue
             
             # 设置摄像头参数
