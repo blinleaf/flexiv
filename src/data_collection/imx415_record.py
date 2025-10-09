@@ -30,7 +30,7 @@ class IMX415Module:
         
         # 如果没有指定设备路径，自动检测可用摄像头
         if config.device_paths is None:
-            self.config.device_paths = self._detect_cameras()
+            self.config.device_paths = ['/dev/video12', '/dev/video13']  # 默认路径
         
         if not self.config.device_paths:
             raise RuntimeError("No IMX415 cameras detected")
@@ -47,8 +47,8 @@ class IMX415Module:
     def _detect_cameras(self) -> List[str]:
         """自动检测可用的摄像头设备"""
         available_cameras = []
-        # 检测前8个设备号
-        for i in range(8):
+        # 检测前14个设备号
+        for i in range(14):
             device_path = f"/dev/video{i}"
             # 检查设备文件是否存在
             if os.path.exists(device_path):
