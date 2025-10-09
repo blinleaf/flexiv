@@ -157,6 +157,8 @@ class TrajectoryRecorder:
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+            else:
+                self.logger.warn(f"Camera loop is lagging by {-sleep_time:.3f} seconds")
     
     def start_state_thread(self, robot, gripper):
         """Start high-frequency state reading thread (~1000Hz)"""

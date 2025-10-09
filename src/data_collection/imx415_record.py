@@ -11,13 +11,13 @@ from dataclasses import dataclass, field
 class IMX415CameraConfig:
     """Configuration parameters for the IMX415 camera setup"""
     real_time_view: bool = False
-    image_size: Tuple[int, int] = (1920, 1080)  # IMX415 常用分辨率
+    image_size: Tuple[int, int] = (1280, 720)  # IMX415 常用分辨率
     fps: int = 30
     save_path: str = './imx415/images'
-    save_freq: int = 10
+    save_freq: int = 30
     device_paths: Optional[List[str]] = field(default=None)  # 摄像头设备路径列表，如 ['/dev/video0', '/dev/video1']
     fourcc: str = 'MJPG'  # 视频编码格式
-    buffer_size: int = 1  # 缓冲区大小
+    buffer_size: int = 5  # 缓冲区大小
 
 
 class IMX415Module:
@@ -245,10 +245,10 @@ def parse_args() -> IMX415CameraConfig:
     parser.add_argument('--fps', type=int, default=30, help='帧率')
     parser.add_argument('--save-path', type=str, default='./imx415/images', 
                        help='图像保存路径')
-    parser.add_argument('--save-freq', type=int, default=10, help='保存频率 (Hz)')
+    parser.add_argument('--save-freq', type=int, default=30, help='保存频率 (Hz)')
     parser.add_argument('--device-paths', type=str, nargs='+', 
                        help='摄像头设备路径列表，如 /dev/video0 /dev/video1')
-    parser.add_argument('--fourcc', type=str, default='MJPG', 
+    parser.add_argument('--fourcc', type=str, default='YUYV', 
                        help='视频编码格式 (MJPG, YUYV, etc.)')
     parser.add_argument('--buffer-size', type=int, default=1, help='缓冲区大小')
     
@@ -280,13 +280,18 @@ if __name__ == '__main__':
                 print(f"  {key}: {value}")
         
         # 获取并显示图像
-        images = get_images(cameras)
-        for i, image in enumerate(images):
-            if image is not None:
-                cv2.imshow(f'IMX415_Camera_{i+1}', image)
         
-        print("按任意键继续，或取消注释下面的代码来保存图像序列...")
-        cv2.waitKey(0)
+        while True:
+            start_time = time.time()
+            images = get_images(cameras)
+            print('len(images): ', len(images))
+            # for i, image in enumerate(images):
+            #     if image is not None:
+            #         cv2.imshow(f'IMX415_Camera_{i+1}', image)
+            
+            # print("按任意键继续，或取消注释下面的代码来保存图像序列...")
+            print('len: ', time.time() - start_time)
+            # cv2.waitKey(0)
         
         # 取消注释以保存图像序列
         # save_image_sequences(cameras, config)
@@ -299,7 +304,48 @@ if __name__ == '__main__':
         except:
             pass
         cv2.destroyAllWindows()
+def test_camera_performance():
+    """测试不同设置的摄像头性能"""
+    test_configs = [
+        {'size': (640, 480), 'fourcc': 'MJPG', 'buffer': 4},
+        {'size': (1280, 720), 'fourcc': 'MJPG', 'buffer': 4},
+        {'size': (1920, 1080), 'fourcc': 'MJPG', 'buffer': 4},
+        {'size': (3840, 2160), 'fourcc': 'MJPG', 'buffer': 4},
+    ]
+    
+    for config in test_configs:
+        print(f"\n测试配置: {config['size']}, {config['fourcc']}")
+        
+        cam_config = IMX415CameraConfig(
+            image_size=config['size'],
+            fourcc=config['fourcc'],
+            buffer_size=config['buffer'],
+            device_paths=['/dev/video12']
+        )
+        
+        try:
+            camera = IMX415Module(cam_config)
+            
+            # 测试10帧的性能
+            start_time = time.time()
+            frame_count = 0
+            for i in range(10):
+                images = camera.get_data()
+                frame_count += 1
+            
+            total_time = time.time() - start_time
+            avg_fps = frame_count / total_time
+            print(f"平均帧率: {avg_fps:.2f} Hz")
+            
+            camera.cleanup()
+            
+        except Exception as e:
+            print(f"配置失败: {e}")
 
+# 在main函数中调用测试
+if __name__ == '__main__':
+    # 先测试性能
+    test_camera_performance()
 # 使用示例:
 # 使用默认设备 /dev/video0:
 # python imx415_record.py --real-time-view

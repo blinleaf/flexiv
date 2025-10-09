@@ -613,7 +613,7 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False
         # Switch to Cartesian impedance mode for teleoperation
         robot.SwitchMode(mode.NRT_CARTESIAN_MOTION_FORCE)
         logger.info(f"Starting teleoperation, recording to: {output_file}")
-        
+
         # Start high-frequency state reading thread
         recorder.start_state_thread(robot, gripper)
 
