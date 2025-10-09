@@ -13,8 +13,8 @@ from dataclasses import dataclass
 class CameraConfig:
     """Configuration parameters for the camera setup"""
     real_time_view: bool = False
-    rgb_size: Tuple[int, int] = (424, 240)
-    depth_size: Tuple[int, int] = (424, 240)
+    rgb_size: Tuple[int, int] = (640, 480)
+    depth_size: Tuple[int, int] = (640, 480)
     fps: int = 30
     save_path: str = './realsense/rgbd'
     save_freq: int = 10
@@ -79,7 +79,7 @@ class RealSenseModule:
             pipeline = rs.pipeline()
             cfg = rs.config()
             cfg.enable_device(serial)
-            cfg.enable_stream(rs.stream.depth, self.config.depth_size[0], self.config.depth_size[1], rs.format.z16, self.config.fps)
+            # cfg.enable_stream(rs.stream.depth, self.config.depth_size[0], self.config.depth_size[1], rs.format.z16, self.config.fps)
             cfg.enable_stream(rs.stream.color, self.config.rgb_size[0], self.config.rgb_size[1], rs.format.bgr8, self.config.fps)
             
             # Start pipeline and store profile
@@ -88,8 +88,8 @@ class RealSenseModule:
             self.profiles.append(profile)
             
             # Get depth scale
-            depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
-            self.depth_scales.append(depth_scale)
+            # depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
+            # self.depth_scales.append(depth_scale)
 
     def get_camera_intrinsics(self, profile: rs.pipeline_profile) -> Tuple[np.ndarray, List[float]]:
         """Get camera intrinsics for a given profile"""
@@ -137,6 +137,38 @@ class RealSenseModule:
                 framesets = []
                 continue
 
+    def get_rgb_data(self) -> List[Tuple[np.ndarray, np.ndarray, List[float]]]:
+        """Get data from all cameras"""
+        framesets = []
+        while True:
+            try:
+                # Wait for frames from all cameras
+                for pipeline in self.pipelines:
+                    frames = pipeline.wait_for_frames()
+                    aligned_frames = self.align.process(frames)
+                    framesets.append(aligned_frames)
+
+                # Get color frames
+                data = []
+                for i, frames in enumerate(framesets):
+                    color_frame = frames.get_color_frame()
+                    
+                    if not color_frame:
+                        framesets = []
+                        break
+
+                    color_image = np.asanyarray(color_frame.get_data())
+                    cam_intrinsics, dist_coeffs = self.get_camera_intrinsics(self.profiles[i])
+                    data.append((color_image, cam_intrinsics, dist_coeffs))
+
+                if len(data) == len(self.pipelines):
+                    return data
+
+            except RuntimeError:
+                print("Error capturing frames, retrying...")
+                framesets = []
+                continue
+    
     def cleanup(self):
         """Clean up resources"""
         for pipeline in self.pipelines:
@@ -179,6 +211,11 @@ def get_rgbd(rs_module: RealSenseModule) -> List[Tuple[np.ndarray, np.ndarray, n
     """Get RGB-D data from all cameras"""
     data = rs_module.get_data()
     return [(color_img, depth_img, cam_intrinsics) for color_img, depth_img, cam_intrinsics, _ in data]
+
+def get_rgb(rs_module: RealSenseModule) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Get RGB data from all cameras"""
+    data = rs_module.get_rgb_data()
+    return [(color_img, cam_intrinsics) for color_img, cam_intrinsics, _ in data]
 
 def parse_args() -> CameraConfig:
     """Parse command line arguments"""

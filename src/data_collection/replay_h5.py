@@ -6,7 +6,7 @@ import spdlog
 import flexivrdk
 import numpy as np
 import h5py
-
+from tqdm import tqdm
 
 def main(args):
     """Main function to control the Flexiv Rizon 4s robot and execute a trajectory."""
@@ -77,13 +77,13 @@ def main(args):
         import pdb; pdb.set_trace()
         # Execute trajectory
         logger.info("Executing trajectory...")
-        for pose, gripper_width in zip(traj_pose, traj_gripper):
+        for pose, gripper_width in tqdm(zip(traj_pose, traj_gripper)):
             robot.SendCartesianMotionForce(
                 [*pose[:3], pose[3], pose[4], pose[5], pose[6]],
                 [0.0] * 6,
             )
             gripper.Move(gripper_width, 0.1, 50)
-            time.sleep(1 / 30)  # Adjust based on trajectory timing
+            time.sleep(1 / 500)  # Adjust based on trajectory timing
 
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")

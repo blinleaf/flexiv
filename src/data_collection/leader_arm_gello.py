@@ -111,7 +111,7 @@ class LeaderArmGello:
         self._prepare_dynamixel()
 
         # match initial joint position
-        # self._match_start_pos_flexiv()
+        self._match_start_pos_flexiv()
         self.GUI = GUI
         if self.GUI:
             self.physics_client = pybullet.connect(pybullet.GUI) 
@@ -357,10 +357,7 @@ class LeaderArmGello:
         Returns the current joint positions and velocities of the leader arm and gripper,
         aligned with the joint conventions (range and direction) of the follower arm.
         """
-        time_start = time.time()
         joint_pos, joint_vel = self.driver.get_positions_and_velocities()
-        time_end = time.time()
-        print(f"get positions time: {time_end - time_start}")
         joint_pos_arm = (
             joint_pos[0:self.num_arm_joints] - self.joint_offsets[0:self.num_arm_joints]
         ) * self.joint_signs[0:self.num_arm_joints]
@@ -423,11 +420,10 @@ class LeaderArmGello:
         #     torque_gripper += self.gripper_feedback(leader_gripper_pos, leader_gripper_vel, gripper_feedback)
         torque_gripper = 0.0
         self.set_leader_joint_torque(torque_arm, torque_gripper)
-
+        time.sleep(0.001)  # sleep for 1ms to prevent overloading the Dynamixel bus
         # self.update_communication(leader_arm_pos, leader_gripper_pos)
         # pose, _ = self.get_link_pose(link_id=6)
         # self.draw_pose(pose)
-        
 
     def get_cmd_to_flexiv(self):
 
@@ -521,17 +517,10 @@ class LeaderArmGello:
         return tau_n
 
     def feedforward_kinetic(self):
-        time_start = time.time()
         leader_arm_pos, _, leader_gripper_pos, leader_gripper_vel = self.get_leader_joint_states()
-        time_end = time.time()
-        print(f"get leader joint states time: {time_end - time_start}")
         self.sync_pybullet(leader_arm_pos)
-        time_sync = time.time()
-        # print(f"sync pybullet time: {time_sync - time_end}")
         leader_arm_pos = np.array(leader_arm_pos)
         link_state = pybullet.getLinkState(self.robot_id, 6)
-        time_link = time.time()
-        # print(f"get link state time: {time_link - time_sync}")
         end_effector_pos = np.array(link_state[0])  # 世界坐标下末端位置 (x, y, z)
         end_effector_ori = np.array(link_state[1])  # 世界坐标下末端姿态 (四元数)
 

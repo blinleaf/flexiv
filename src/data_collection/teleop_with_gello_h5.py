@@ -26,7 +26,7 @@ import quaternion
 from leader_arm_gello import LeaderArmGello
 
 # Import Realsense python libraries
-from realsense_record import RealSenseModule, get_rgbd, CameraConfig
+from realsense_record import RealSenseModule, get_rgbd, CameraConfig, get_rgb
 from flexiv_robot_with_tool import Robotic_pybullet as Flexiv_Robotic_pybullet
 import yaml
 
@@ -57,12 +57,12 @@ class TrajectoryRecorder:
         
         # Get image shape by capturing one frame
         try:
-            test_data = get_rgbd(self.cameras)
+            test_data = get_rgb(self.cameras)
             self.image_shape = test_data[0][0].shape  # (H, W, C)
             self.logger.info(f"Camera image shape: {self.image_shape}")
         except Exception as e:
             self.logger.error(f"Failed to get image shape: {e}")
-            self.image_shape = (424, 240, 3)  # Default shape
+            self.image_shape = (640, 480, 3)  # Default shape
             
         for i in range(self.num_cameras):
             self.camera_images_list[f'cam{i+1}'] = []
@@ -96,7 +96,6 @@ class TrajectoryRecorder:
         zero_placeholder = np.zeros(self.image_shape, dtype=np.uint8)
         dropped_count = 0
         total_count = 0
-        
         while self._camera_running:
             loop_start = time.time()
             timestamp = time.time()
@@ -106,7 +105,7 @@ class TrajectoryRecorder:
             camera_valid = [False] * self.num_cameras
             
             try:
-                camera_data = get_rgbd(self.cameras)
+                camera_data = get_rgb(self.cameras)
                 
                 # Validate camera_data
                 if camera_data is None or len(camera_data) != self.num_cameras:
@@ -140,6 +139,7 @@ class TrajectoryRecorder:
             # Atomically append to all lists
             with self._camera_lock:
                 self.camera_timestamps.append(timestamp)
+
                 for i in range(self.num_cameras):
                     cam_key = f'cam{i+1}'
                     self.camera_images_list[cam_key].append(copied_images[i])
@@ -169,8 +169,10 @@ class TrajectoryRecorder:
     
     def _state_loop(self):
         """Background high-frequency state reading loop"""
+        interval = 0.001  # Target ~1000Hz
         while self._state_running:
             try:
+                loop_start = time.time()
                 # Read states at maximum frequency
                 robot_states = self.robot.states()
                 gripper_states = self.gripper.states()
@@ -187,9 +189,11 @@ class TrajectoryRecorder:
                 # Pass the timestamp to ensure consistency between state reading and recording time
                 if should_record and self.is_recording:
                     self.add_state(robot_states, gripper_states, timestamp)
-                
-                # No sleep - run at maximum frequency (~1000Hz)
-                
+                elapsed = time.time() - loop_start
+                sleep_time = interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+
             except Exception as e:
                 self.logger.error(f"State thread error: {str(e)}")
                 time.sleep(0.001)  # Brief sleep on error
@@ -264,10 +268,10 @@ class TrajectoryRecorder:
         """
         if not self.is_recording:
             return
+        
 
         if timestamp is None:
             timestamp = time.time()
-        
         action = [offset_pos[0], offset_pos[1], offset_pos[2], 
                  offset_quat.w, offset_quat.x, offset_quat.y, offset_quat.z, 
                  gripper_close]
@@ -313,7 +317,7 @@ class TrajectoryRecorder:
             self.logger.info(f"{cam_name}: {valid_count}/{total_camera_frames} valid ({drop_rate:.2f}% dropped)")
 
     def save_trajectory(self, task):
-        """Save trajectory data to HDF5 file, images as uint8, other data as float32"""
+        """Save trajectory data to HDF5 file, images as uint8, other data as float64"""
         # Stop state thread
         self.stop_state_thread()
         
@@ -341,22 +345,22 @@ class TrajectoryRecorder:
             hf.attrs[f'{cam_name}_shape'] = str(images.shape[1:])
         
         with h5py.File(self.output_file, 'w', libver='latest', rdcc_nbytes=1024*1024*100) as hf:
-            # Save non-image data as float32
+            # Save non-image data as float64
             # State data with state timestamps (~1000Hz)
-            hf.create_dataset('timestamps', data=np.array(self.timestamps, dtype=np.float32))
-            hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list, dtype=np.float32))
-            hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list, dtype=np.float32))
-            hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list, dtype=np.float32))
-            hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list, dtype=np.float32))
-            hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list, dtype=np.float32))
-            hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list, dtype=np.float32))
+            hf.create_dataset('timestamps', data=np.array(self.timestamps, dtype=np.float64))
+            hf.create_dataset('tcp_pose', data=np.array(self.tcp_pose_list, dtype=np.float64))
+            hf.create_dataset('tcp_velocity', data=np.array(self.tcp_velocity_list, dtype=np.float64))
+            hf.create_dataset('ft_sensor_raw', data=np.array(self.ft_sensor_raw_list, dtype=np.float64))
+            hf.create_dataset('f_ext_tcp_frame', data=np.array(self.f_ext_tcp_frame_list, dtype=np.float64))
+            hf.create_dataset('f_ext_base_frame', data=np.array(self.f_ext_base_frame_list, dtype=np.float64))
+            hf.create_dataset('gripper_width', data=np.array(self.gripper_width_list, dtype=np.float64))
             
             # Action data with action timestamps (~30Hz from main loop)
-            hf.create_dataset('action_timestamps', data=np.array(self.action_timestamps, dtype=np.float32))
-            hf.create_dataset('action', data=np.array(self.action_list, dtype=np.float32))
+            hf.create_dataset('action_timestamps', data=np.array(self.action_timestamps, dtype=np.float64))
+            hf.create_dataset('action', data=np.array(self.action_list, dtype=np.float64))
             
             # Camera timestamps (~30Hz from camera thread)
-            hf.create_dataset('camera_timestamps', data=np.array(self.camera_timestamps, dtype=np.float32))
+            hf.create_dataset('camera_timestamps', data=np.array(self.camera_timestamps, dtype=np.float64))
             
             # Save metadata
             hf.attrs['instruction'] = task
@@ -418,11 +422,7 @@ class TrajectoryRecorder:
         height, width = self.image_shape[:2]
         
         # Try different codecs in order of preference
-        codecs_to_try = [
-            ('avc1', 'H.264'),  # Best compatibility
-            ('mp4v', 'MPEG-4'), # Fallback
-            ('XVID', 'Xvid'),   # Another fallback
-        ]
+        codecs_to_try = [('avc1', 'H.264'), ('mp4v', 'MPEG-4'), ('XVID', 'Xvid')]
         
         # Get base path from output file
         base_path = os.path.splitext(self.output_file)[0]
@@ -523,7 +523,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency, rgb_width=424, rgb_height=240, fps=30, gui=False):
+def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False):
     """Main function for teleoperation with recording"""
     logger = spdlog.ConsoleLogger("Main")
     logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
@@ -557,9 +557,8 @@ def main(task, path, frequency, rgb_width=424, rgb_height=240, fps=30, gui=False
         tool_names = {"peel": "peel_center", "sensor": "sensor_center"}
         flexiv_robot_virtual = Flexiv_Robotic_pybullet(urdf_path = urdf_path,pb_id = gello_controller.physics_client)
         flexiv_robot_virtual.set_tool_to_flange(tool_names)
-        # flexiv_robot_virtual.view_link_pose("sensor_center")
-        # flexiv_robot_virtual.view_link_pose("peel_center")
-    
+        flexiv_robot_virtual.view_link_pose("sensor_center")
+        flexiv_robot_virtual.view_link_pose("peel_center")
 
     try:
         # RDK Initialization
@@ -619,20 +618,13 @@ def main(task, path, frequency, rgb_width=424, rgb_height=240, fps=30, gui=False
         recorder.start_state_thread(robot, gripper)
 
         frame_cnt = 0
-        is_initialized = False
 
-        # thread_control = threading.Thread(target=gello_controller.control_loop_callback, daemon=True)
-
-        # thread_control.start()
-        # print(f"线程是否存活: {thread_control.is_alive()}")
-        # print(f"线程标识符: {thread_control.ident}")
-        # print(f"线程名称: {thread_control.name}")
         while True:
+            recorder.set_state_recording(True)
 
-            time_start = time.time()
             cmd_end_effector_pos, cmd_quat_numpy, rot_matrix, cmd_gripper_pos = gello_controller.get_cmd_to_flexiv()
-            time_mid = time.time()
-            print(f"获取指令时间: {time_mid - time_start}")
+            gello_controller.control_loop_callback()
+
             if cmd_end_effector_pos is None or cmd_quat_numpy is None:
                 logger.warn("No input from Gello controller, waiting...")
                 time.sleep(0.02)
@@ -640,29 +632,19 @@ def main(task, path, frequency, rgb_width=424, rgb_height=240, fps=30, gui=False
 
             cmd_leader_gripper_pos = (1-cmd_gripper_pos)*0.14
             gripper.Move(cmd_leader_gripper_pos, 0.1, 50)
-            # robot.SendCartesianMotionForce([*cmd_end_effector_pos, cmd_quat_numpy.w, cmd_quat_numpy.x, cmd_quat_numpy.y, cmd_quat_numpy.z], 
-            #                                 [0.0] * 6, max_linear_vel = 0.2, max_angular_vel = 1.0,)
-            time_mid2 = time.time()
-            print(f"发送指令时间: {time_mid2 - time_mid}")
+            robot.SendCartesianMotionForce([*cmd_end_effector_pos, cmd_quat_numpy.w, cmd_quat_numpy.x, cmd_quat_numpy.y, cmd_quat_numpy.z], 
+                                            [0.0] * 6, max_linear_vel = 0.2, max_angular_vel = 1.0,)
             # Record action
             recorder.add_action(cmd_end_effector_pos, cmd_quat_numpy, cmd_leader_gripper_pos)
             frame_cnt += 1
 
-            # gello_controller.control_loop_callback()
-            time_end = time.time()
-            print(f"一轮循环时间: {time_end - time_start}")
             if gui:
                 cmd_end_effector_pos_pybullet = cmd_end_effector_pos + np.array([0.0, 1.0, 0.0])
                 flexiv_robot_virtual.move_target_tcp_pose_quaternion(cmd_end_effector_pos_pybullet , rot_matrix, tool_name="sensor")
 
             if frame_cnt % frequency == 0:
                 logger.info(f"Collected {frame_cnt} frames...")
-            else:
-                # Not collecting, disable state recording
-                if is_initialized:
-                    recorder.set_state_recording(False)
-                    logger.info("Stop collecting data (rightHand trigger released)")
-                    is_initialized = False
+
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user, saving trajectory...")
@@ -691,8 +673,8 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default=default_path, help="Path to save HDF5 files")
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
-    parser.add_argument("--rgb_width", type=int, default=424, help="RGB image width")
-    parser.add_argument("--rgb_height", type=int, default=240, help="RGB image height")
+    parser.add_argument("--rgb_width", type=int, default=848, help="RGB image width")
+    parser.add_argument("--rgb_height", type=int, default=480, help="RGB image height")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second")
     parser.add_argument("--GUI", type=bool, default=False, help="Enable pybullet GUI")
 
