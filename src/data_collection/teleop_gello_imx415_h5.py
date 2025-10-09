@@ -523,7 +523,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False):
+def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False, device_paths=None):
     """Main function for teleoperation with recording"""
     logger = spdlog.ConsoleLogger("Main")
     logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
@@ -538,7 +538,8 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False
         real_time_view=True,
         image_size=(rgb_width, rgb_height),
         fps=fps,
-        save_freq=frequency
+        save_freq=frequency,
+        device_paths=device_paths
     )
     
     recorder = TrajectoryRecorder(output_file, camera_config)
@@ -676,7 +677,10 @@ if __name__ == "__main__":
     parser.add_argument("--rgb_height", type=int, default=1080, help="RGB image height")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second")
     parser.add_argument("--GUI", type=bool, default=False, help="Enable pybullet GUI")
+    parser.add_argument("--device-paths", type=str, nargs='+', 
+                       help="摄像头设备路径列表，如 /dev/video0 /dev/video1。如不指定则使用 /dev/video0")
 
     args = parser.parse_args()
     main(task=args.task, path=args.path, frequency=args.frequency, 
-         rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps, gui=args.GUI)
+         rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps, gui=args.GUI,
+         device_paths=getattr(args, 'device_paths', None))
