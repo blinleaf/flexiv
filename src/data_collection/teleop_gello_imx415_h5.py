@@ -27,11 +27,14 @@ from leader_arm_gello import LeaderArmGello
 
 # Import IMX415 python libraries
 from imx415_record import IMX415Module, get_images, IMX415CameraConfig
+
+# Import Realsense python libraries
+from realsense_record import RealSenseModule, get_rgb, CameraConfig
 from flexiv_robot_with_tool import Robotic_pybullet as Flexiv_Robotic_pybullet
 import yaml
 
 class TrajectoryRecorder:
-    def __init__(self, output_file, camera_config=None):
+    def __init__(self, output_file, camera_config=None, realsense_config=None):
         self.timestamps = []  # State timestamps (~1000Hz)
         self.tcp_pose_list = []
         self.tcp_velocity_list = []
@@ -39,42 +42,91 @@ class TrajectoryRecorder:
         self.f_ext_tcp_frame_list = []
         self.f_ext_base_frame_list = []
         self.gripper_width_list = []
+        
+        # RealSense camera data
         self.camera_images_list = {}
         self.camera_timestamps = []  # Camera capture timestamps (~30Hz)
         self.camera_valid_list = {}  # Valid mask for each camera frame
+        
+        # IMX415 camera data
+        self.camera_imx415_list = {}  # IMX415 camera images
+        self.camera_imx415_timestamps = []  # IMX415 capture timestamps
+        self.camera_imx415_valid_list = {}  # IMX415 valid mask
+        
         self.action_list = []
         self.action_timestamps = []  # Action timestamps (~30Hz, from main loop)
 
         self.output_file = output_file
         self.is_recording = True
         self.logger = spdlog.ConsoleLogger("Recorder")
-        # Initialize IMX415Module
-        self.cameras = IMX415Module(camera_config)
-        self.camera_config = camera_config
-        # Initialize lists for each camera
-        self.num_cameras = self.cameras.device_count
-        self.logger.info(f"Initialized {self.num_cameras} cameras")
         
-        # Get image shape by capturing one frame
-        try:
-            test_data = get_images(self.cameras)
-            self.image_shape = test_data[0].shape  # (H, W, C)
-            self.logger.info(f"Camera image shape: {self.image_shape}")
-        except Exception as e:
-            self.logger.error(f"Failed to get image shape: {e}")
-            self.image_shape = (1920, 1080, 3)  # Default shape for IMX415
+        # Initialize RealSense cameras
+        self.realsense_cameras = None
+        self.num_realsense_cameras = 0
+        if realsense_config is not None:
+            self.realsense_cameras = RealSenseModule(realsense_config)
+            self.realsense_config = realsense_config
+            self.num_realsense_cameras = len(self.realsense_cameras.serial_numbers)
+            self.logger.info(f"Initialized {self.num_realsense_cameras} RealSense cameras")
+        
+        # Initialize IMX415 cameras
+        self.imx415_cameras = None
+        self.num_imx415_cameras = 0
+        if camera_config is not None:
+            self.imx415_cameras = IMX415Module(camera_config)
+            self.imx415_config = camera_config
+            self.num_imx415_cameras = self.imx415_cameras.device_count
+            self.logger.info(f"Initialized {self.num_imx415_cameras} IMX415 cameras")
+        
+        # Get image shapes by capturing test frames
+        self.realsense_image_shape = None
+        self.imx415_image_shape = None
+        
+        # Get RealSense image shape
+        if self.realsense_cameras is not None:
+            try:
+                test_data = get_rgb(self.realsense_cameras)
+                self.realsense_image_shape = test_data[0][0].shape  # (H, W, C)
+                self.logger.info(f"RealSense image shape: {self.realsense_image_shape}")
+            except Exception as e:
+                self.logger.error(f"Failed to get RealSense image shape: {e}")
+                self.realsense_image_shape = (848, 480, 3)  # Default shape for RealSense
+        
+        # Get IMX415 image shape
+        if self.imx415_cameras is not None:
+            try:
+                test_data = get_images(self.imx415_cameras)
+                self.imx415_image_shape = test_data[0].shape  # (H, W, C)
+                self.logger.info(f"IMX415 image shape: {self.imx415_image_shape}")
+            except Exception as e:
+                self.logger.error(f"Failed to get IMX415 image shape: {e}")
+                self.imx415_image_shape = (1280, 720, 3)  # Default shape for IMX415
             
-        for i in range(self.num_cameras):
+        # Initialize RealSense camera lists
+        for i in range(self.num_realsense_cameras):
             self.camera_images_list[f'cam{i+1}'] = []
             self.camera_valid_list[f'cam{i+1}'] = []
+            
+        # Initialize IMX415 camera lists
+        for i in range(self.num_imx415_cameras):
+            self.camera_imx415_list[f'imx415_cam{i+1}'] = []
+            self.camera_imx415_valid_list[f'imx415_cam{i+1}'] = []
         
         # Start background camera thread
         self._camera_lock = threading.Lock()
         self._camera_running = True
-        self._camera_fps = camera_config.fps if camera_config else 30
+        
+        # Determine camera fps (prioritize IMX415, fallback to RealSense, default to 30)
+        if camera_config is not None:
+            self._camera_fps = camera_config.fps
+        elif realsense_config is not None:
+            self._camera_fps = realsense_config.fps
+        else:
+            self._camera_fps = 30
+            
         self._camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
         self._camera_thread.start()
-        self.logger.info(f"Camera thread started at {self._camera_fps} fps")
+        self.logger.info(f"Dual camera thread started at {self._camera_fps} fps")
         
         # Robot and gripper state thread related variables (high frequency ~1000Hz)
         self._state_lock = threading.Lock()
@@ -88,69 +140,126 @@ class TrajectoryRecorder:
         self.gripper = None
     
     def _camera_loop(self):
-        """Background camera capture loop running at fixed fps
+        """Background dual camera capture loop running at fixed fps
         
-        Uses zero-value placeholders for dropped frames and tracks validity with camera_valid_list.
+        Captures from both RealSense and IMX415 cameras simultaneously.
+        Uses zero-value placeholders for dropped frames and tracks validity.
         """
         interval = 1.0 / self._camera_fps
-        zero_placeholder = np.zeros(self.image_shape, dtype=np.uint8)
+        
+        # Create zero placeholders for each camera type
+        realsense_zero_placeholder = None
+        imx415_zero_placeholder = None
+        
+        if self.realsense_image_shape is not None:
+            realsense_zero_placeholder = np.zeros(self.realsense_image_shape, dtype=np.uint8)
+        if self.imx415_image_shape is not None:
+            imx415_zero_placeholder = np.zeros(self.imx415_image_shape, dtype=np.uint8)
+        
         dropped_count = 0
         total_count = 0
+        
         while self._camera_running:
             loop_start = time.time()
             timestamp = time.time()
             
-            # Try to capture from all cameras
-            camera_data = None
-            camera_valid = [False] * self.num_cameras
+            # Capture RealSense cameras
+            realsense_data = None
+            realsense_valid = [False] * self.num_realsense_cameras
             
-            try:
-                camera_data = get_images(self.cameras)
-                
-                # Validate camera_data
-                if camera_data is None or len(camera_data) != self.num_cameras:
-                    raise RuntimeError(f"Expected {self.num_cameras} cameras, got {len(camera_data) if camera_data else 0}")
-                
-                # Mark which cameras have valid data
-                for i in range(len(camera_data)):
-                    if camera_data[i] is not None:
-                        camera_valid[i] = True
+            if self.realsense_cameras is not None:
+                try:
+                    realsense_data = get_rgb(self.realsense_cameras)
                     
-            except Exception as e:
-                self.logger.warn(f"Camera capture failed: {str(e)}, using placeholders for all cameras")
-                camera_data = None
-                camera_valid = [False] * self.num_cameras
+                    if realsense_data is not None and len(realsense_data) == self.num_realsense_cameras:
+                        for i in range(len(realsense_data)):
+                            if realsense_data[i][0] is not None:
+                                realsense_valid[i] = True
+                    else:
+                        raise RuntimeError(f"Expected {self.num_realsense_cameras} RealSense cameras, got {len(realsense_data) if realsense_data else 0}")
+                        
+                except Exception as e:
+                    self.logger.warn(f"RealSense capture failed: {str(e)}")
+                    realsense_data = None
+                    realsense_valid = [False] * self.num_realsense_cameras
             
-            # Prepare images (valid data or zero placeholder)
-            copied_images = []
-            for i in range(self.num_cameras):
-                if camera_valid[i] and camera_data is not None:
+            # Capture IMX415 cameras
+            imx415_data = None
+            imx415_valid = [False] * self.num_imx415_cameras
+            
+            if self.imx415_cameras is not None:
+                try:
+                    imx415_data = get_images(self.imx415_cameras)
+                    
+                    if imx415_data is not None and len(imx415_data) == self.num_imx415_cameras:
+                        for i in range(len(imx415_data)):
+                            if imx415_data[i] is not None:
+                                imx415_valid[i] = True
+                    else:
+                        raise RuntimeError(f"Expected {self.num_imx415_cameras} IMX415 cameras, got {len(imx415_data) if imx415_data else 0}")
+                        
+                except Exception as e:
+                    self.logger.warn(f"IMX415 capture failed: {str(e)}")
+                    imx415_data = None
+                    imx415_valid = [False] * self.num_imx415_cameras
+            
+            # Prepare RealSense images
+            realsense_copied_images = []
+            for i in range(self.num_realsense_cameras):
+                if realsense_valid[i] and realsense_data is not None:
                     try:
-                        image = np.array(camera_data[i], copy=True)
-                        copied_images.append(image)
+                        image = np.array(realsense_data[i][0], copy=True)
+                        realsense_copied_images.append(image)
                     except Exception as e:
-                        self.logger.warn(f"Camera {i+1} copy failed: {e}, using placeholder")
-                        copied_images.append(zero_placeholder.copy())
-                        camera_valid[i] = False
+                        self.logger.warn(f"RealSense camera {i+1} copy failed: {e}")
+                        realsense_copied_images.append(realsense_zero_placeholder.copy())
+                        realsense_valid[i] = False
                 else:
-                    copied_images.append(zero_placeholder.copy())
-                    camera_valid[i] = False
+                    realsense_copied_images.append(realsense_zero_placeholder.copy())
+                    realsense_valid[i] = False
+            
+            # Prepare IMX415 images
+            imx415_copied_images = []
+            for i in range(self.num_imx415_cameras):
+                if imx415_valid[i] and imx415_data is not None:
+                    try:
+                        image = np.array(imx415_data[i], copy=True)
+                        imx415_copied_images.append(image)
+                    except Exception as e:
+                        self.logger.warn(f"IMX415 camera {i+1} copy failed: {e}")
+                        imx415_copied_images.append(imx415_zero_placeholder.copy())
+                        imx415_valid[i] = False
+                else:
+                    imx415_copied_images.append(imx415_zero_placeholder.copy())
+                    imx415_valid[i] = False
             
             # Atomically append to all lists
             with self._camera_lock:
-                self.camera_timestamps.append(timestamp)
-
-                for i in range(self.num_cameras):
-                    cam_key = f'cam{i+1}'
-                    self.camera_images_list[cam_key].append(copied_images[i])
-                    self.camera_valid_list[cam_key].append(camera_valid[i])
+                # Store RealSense data (keeping original format)
+                if self.num_realsense_cameras > 0:
+                    self.camera_timestamps.append(timestamp)
+                    for i in range(self.num_realsense_cameras):
+                        cam_key = f'cam{i+1}'
+                        self.camera_images_list[cam_key].append(realsense_copied_images[i])
+                        self.camera_valid_list[cam_key].append(realsense_valid[i])
+                
+                # Store IMX415 data (new format)
+                if self.num_imx415_cameras > 0:
+                    self.camera_imx415_timestamps.append(timestamp)
+                    for i in range(self.num_imx415_cameras):
+                        cam_key = f'imx415_cam{i+1}'
+                        self.camera_imx415_list[cam_key].append(imx415_copied_images[i])
+                        self.camera_imx415_valid_list[cam_key].append(imx415_valid[i])
             
             # Statistics
             total_count += 1
-            if not any(camera_valid):
+            all_cameras_failed = (not any(realsense_valid) and self.num_realsense_cameras > 0) and \
+                               (not any(imx415_valid) and self.num_imx415_cameras > 0)
+            
+            if all_cameras_failed:
                 dropped_count += 1
                 if dropped_count % 10 == 0:
-                    self.logger.warn(f"Camera frames dropped: {dropped_count}/{total_count}")
+                    self.logger.warn(f"All camera frames dropped: {dropped_count}/{total_count}")
             
             # Sleep to maintain fps
             elapsed = time.time() - loop_start
@@ -158,7 +267,7 @@ class TrajectoryRecorder:
             if sleep_time > 0:
                 time.sleep(sleep_time)
             else:
-                self.logger.warn(f"Camera loop is lagging by {-sleep_time:.3f} seconds")
+                self.logger.warn(f"Dual camera loop is lagging by {-sleep_time:.3f} seconds")
     
     def start_state_thread(self, robot, gripper):
         """Start high-frequency state reading thread (~1000Hz)"""
@@ -292,31 +401,62 @@ class TrajectoryRecorder:
         assert len(self.timestamps) == len(self.tcp_pose_list), \
             f"State timestamps length ({len(self.timestamps)}) doesn't match state data ({len(self.tcp_pose_list)})"
         
-        # Validate camera data consistency
-        for i in range(self.num_cameras):
-            cam_name = f'cam{i+1}'
-            assert len(self.camera_images_list[cam_name]) == len(self.camera_timestamps), \
-                f"{cam_name} image length ({len(self.camera_images_list[cam_name])}) doesn't match camera timestamps ({len(self.camera_timestamps)})"
-            assert len(self.camera_valid_list[cam_name]) == len(self.camera_timestamps), \
-                f"{cam_name} valid mask length ({len(self.camera_valid_list[cam_name])}) doesn't match camera timestamps ({len(self.camera_timestamps)})"
+        # Validate RealSense camera data consistency
+        if self.num_realsense_cameras > 0:
+            for i in range(self.num_realsense_cameras):
+                cam_name = f'cam{i+1}'
+                assert len(self.camera_images_list[cam_name]) == len(self.camera_timestamps), \
+                    f"RealSense {cam_name} image length ({len(self.camera_images_list[cam_name])}) doesn't match camera timestamps ({len(self.camera_timestamps)})"
+                assert len(self.camera_valid_list[cam_name]) == len(self.camera_timestamps), \
+                    f"RealSense {cam_name} valid mask length ({len(self.camera_valid_list[cam_name])}) doesn't match camera timestamps ({len(self.camera_timestamps)})"
+            
+            # Check all RealSense cameras have the same length
+            realsense_lengths = [len(self.camera_images_list[f'cam{i+1}']) for i in range(self.num_realsense_cameras)]
+            assert len(set(realsense_lengths)) == 1, \
+                f"RealSense camera image lengths are inconsistent: {realsense_lengths}"
         
-        # Check all cameras have the same length
-        cam_lengths = [len(self.camera_images_list[f'cam{i+1}']) for i in range(self.num_cameras)]
-        assert len(set(cam_lengths)) == 1, \
-            f"Camera image lengths are inconsistent: {cam_lengths}"
+        # Validate IMX415 camera data consistency
+        if self.num_imx415_cameras > 0:
+            for i in range(self.num_imx415_cameras):
+                cam_name = f'imx415_cam{i+1}'
+                assert len(self.camera_imx415_list[cam_name]) == len(self.camera_imx415_timestamps), \
+                    f"IMX415 {cam_name} image length ({len(self.camera_imx415_list[cam_name])}) doesn't match IMX415 timestamps ({len(self.camera_imx415_timestamps)})"
+                assert len(self.camera_imx415_valid_list[cam_name]) == len(self.camera_imx415_timestamps), \
+                    f"IMX415 {cam_name} valid mask length ({len(self.camera_imx415_valid_list[cam_name])}) doesn't match IMX415 timestamps ({len(self.camera_imx415_timestamps)})"
+            
+            # Check all IMX415 cameras have the same length
+            imx415_lengths = [len(self.camera_imx415_list[f'imx415_cam{i+1}']) for i in range(self.num_imx415_cameras)]
+            assert len(set(imx415_lengths)) == 1, \
+                f"IMX415 camera image lengths are inconsistent: {imx415_lengths}"
         
         # Calculate valid frame statistics
-        total_camera_frames = len(self.camera_timestamps)
-        valid_counts = {f'cam{i+1}': sum(self.camera_valid_list[f'cam{i+1}']) for i in range(self.num_cameras)}
+        total_realsense_frames = len(self.camera_timestamps) if self.num_realsense_cameras > 0 else 0
+        total_imx415_frames = len(self.camera_imx415_timestamps) if self.num_imx415_cameras > 0 else 0
+        
+        realsense_valid_counts = {}
+        imx415_valid_counts = {}
+        
+        if self.num_realsense_cameras > 0:
+            realsense_valid_counts = {f'cam{i+1}': sum(self.camera_valid_list[f'cam{i+1}']) for i in range(self.num_realsense_cameras)}
+        
+        if self.num_imx415_cameras > 0:
+            imx415_valid_counts = {f'imx415_cam{i+1}': sum(self.camera_imx415_valid_list[f'imx415_cam{i+1}']) for i in range(self.num_imx415_cameras)}
         
         self.logger.info(f"Data validation passed: "
                         f"States: {len(self.timestamps)}, "
                         f"Actions: {len(self.action_list)}, "
-                        f"Camera frames: {total_camera_frames}")
+                        f"RealSense frames: {total_realsense_frames}, "
+                        f"IMX415 frames: {total_imx415_frames}")
         
-        for cam_name, valid_count in valid_counts.items():
-            drop_rate = (1 - valid_count / max(total_camera_frames, 1)) * 100
-            self.logger.info(f"{cam_name}: {valid_count}/{total_camera_frames} valid ({drop_rate:.2f}% dropped)")
+        # Log RealSense statistics
+        for cam_name, valid_count in realsense_valid_counts.items():
+            drop_rate = (1 - valid_count / max(total_realsense_frames, 1)) * 100
+            self.logger.info(f"RealSense {cam_name}: {valid_count}/{total_realsense_frames} valid ({drop_rate:.2f}% dropped)")
+        
+        # Log IMX415 statistics
+        for cam_name, valid_count in imx415_valid_counts.items():
+            drop_rate = (1 - valid_count / max(total_imx415_frames, 1)) * 100
+            self.logger.info(f"{cam_name}: {valid_count}/{total_imx415_frames} valid ({drop_rate:.2f}% dropped)")
 
     def save_trajectory(self, task):
         """Save trajectory data to HDF5 file, images as uint8, other data as float64"""
@@ -327,11 +467,16 @@ class TrajectoryRecorder:
         self._camera_running = False
         if self._camera_thread.is_alive():
             self._camera_thread.join(timeout=2.0)
-        self.logger.info("Camera thread stopped")
+        self.logger.info("Dual camera thread stopped")
         
         # Then cleanup camera pipelines (must be after thread stops)
-        self.cameras.cleanup()
-        self.logger.info("Camera pipelines cleaned up")
+        if self.realsense_cameras is not None:
+            self.realsense_cameras.cleanup()
+            self.logger.info("RealSense camera pipelines cleaned up")
+        
+        if self.imx415_cameras is not None:
+            self.imx415_cameras.cleanup()
+            self.logger.info("IMX415 camera pipelines cleaned up")
         
         self.align_frames()
         self.logger.info(f"Saving trajectory to {self.output_file}...")
@@ -361,19 +506,32 @@ class TrajectoryRecorder:
             hf.create_dataset('action_timestamps', data=np.array(self.action_timestamps, dtype=np.float64))
             hf.create_dataset('action', data=np.array(self.action_list, dtype=np.float64))
             
-            # Camera timestamps (~30Hz from camera thread)
-            hf.create_dataset('camera_timestamps', data=np.array(self.camera_timestamps, dtype=np.float64))
+            # RealSense camera timestamps (~30Hz from camera thread)
+            if self.num_realsense_cameras > 0:
+                hf.create_dataset('camera_timestamps', data=np.array(self.camera_timestamps, dtype=np.float64))
+            
+            # IMX415 camera timestamps (~30Hz from camera thread)
+            if self.num_imx415_cameras > 0:
+                hf.create_dataset('camera_imx415_timestamps', data=np.array(self.camera_imx415_timestamps, dtype=np.float64))
             
             # Save metadata
             hf.attrs['instruction'] = task
             hf.attrs['num_state_frames'] = len(self.timestamps)
             hf.attrs['num_action_frames'] = len(self.action_timestamps)
-            hf.attrs['num_camera_frames'] = len(self.camera_timestamps)
+            hf.attrs['num_realsense_cameras'] = self.num_realsense_cameras
+            hf.attrs['num_imx415_cameras'] = self.num_imx415_cameras
+            hf.attrs['num_realsense_frames'] = len(self.camera_timestamps) if self.num_realsense_cameras > 0 else 0
+            hf.attrs['num_imx415_frames'] = len(self.camera_imx415_timestamps) if self.num_imx415_cameras > 0 else 0
             hf.attrs['creation_date'] = time.strftime("%Y-%m-%d %H:%M:%S")
-            hf.attrs['num_cameras'] = self.num_cameras
+            # Legacy compatibility
+            hf.attrs['num_cameras'] = self.num_realsense_cameras + self.num_imx415_cameras
+            hf.attrs['num_camera_frames'] = max(
+                len(self.camera_timestamps) if self.num_realsense_cameras > 0 else 0,
+                len(self.camera_imx415_timestamps) if self.num_imx415_cameras > 0 else 0
+            )
             
-            # Save per-camera statistics
-            for i in range(self.num_cameras):
+            # Save per-camera statistics for RealSense
+            for i in range(self.num_realsense_cameras):
                 cam_name = f'cam{i+1}'
                 valid_count = sum(self.camera_valid_list[cam_name])
                 total_count = len(self.camera_valid_list[cam_name])
@@ -381,12 +539,32 @@ class TrajectoryRecorder:
                 hf.attrs[f'{cam_name}_total_frames'] = total_count
                 hf.attrs[f'{cam_name}_drop_rate'] = (total_count - valid_count) / max(total_count, 1)
             
+            # Save per-camera statistics for IMX415
+            for i in range(self.num_imx415_cameras):
+                cam_name = f'imx415_cam{i+1}'
+                valid_count = sum(self.camera_imx415_valid_list[cam_name])
+                total_count = len(self.camera_imx415_valid_list[cam_name])
+                hf.attrs[f'{cam_name}_valid_frames'] = valid_count
+                hf.attrs[f'{cam_name}_total_frames'] = total_count
+                hf.attrs[f'{cam_name}_drop_rate'] = (total_count - valid_count) / max(total_count, 1)
+            
             # Save images asynchronously
             threads = []
-            for i in range(self.num_cameras):
+            
+            # Save RealSense images
+            for i in range(self.num_realsense_cameras):
                 cam_name = f'cam{i+1}'
                 images = np.array(self.camera_images_list[cam_name])
                 valid_mask = self.camera_valid_list[cam_name]
+                thread = threading.Thread(target=save_images, args=(hf, images, valid_mask, cam_name))
+                threads.append(thread)
+                thread.start()
+            
+            # Save IMX415 images
+            for i in range(self.num_imx415_cameras):
+                cam_name = f'imx415_cam{i+1}'
+                images = np.array(self.camera_imx415_list[cam_name])
+                valid_mask = self.camera_imx415_valid_list[cam_name]
                 thread = threading.Thread(target=save_images, args=(hf, images, valid_mask, cam_name))
                 threads.append(thread)
                 thread.start()
@@ -396,32 +574,51 @@ class TrajectoryRecorder:
                 thread.join()
         
         # Calculate overall camera statistics
-        total_camera_frames = len(self.camera_timestamps)
-        valid_counts = {f'cam{i+1}': sum(self.camera_valid_list[f'cam{i+1}']) for i in range(self.num_cameras)}
+        total_realsense_frames = len(self.camera_timestamps) if self.num_realsense_cameras > 0 else 0
+        total_imx415_frames = len(self.camera_imx415_timestamps) if self.num_imx415_cameras > 0 else 0
+        
+        realsense_valid_counts = {}
+        imx415_valid_counts = {}
+        
+        if self.num_realsense_cameras > 0:
+            realsense_valid_counts = {f'cam{i+1}': sum(self.camera_valid_list[f'cam{i+1}']) for i in range(self.num_realsense_cameras)}
+        
+        if self.num_imx415_cameras > 0:
+            imx415_valid_counts = {f'imx415_cam{i+1}': sum(self.camera_imx415_valid_list[f'imx415_cam{i+1}']) for i in range(self.num_imx415_cameras)}
         
         self.logger.info(f"Task: {task}, "
                         f"State frames: {len(self.timestamps)}, "
                         f"Action frames: {len(self.action_timestamps)}, "
-                        f"Camera frames: {total_camera_frames}, "
+                        f"RealSense frames: {total_realsense_frames}, "
+                        f"IMX415 frames: {total_imx415_frames}, "
                         f"Saved to: {self.output_file}")
         
-        for cam_name, valid_count in valid_counts.items():
-            drop_count = total_camera_frames - valid_count
-            drop_rate = (drop_count / max(total_camera_frames, 1)) * 100
-            self.logger.info(f"  {cam_name}: {valid_count}/{total_camera_frames} valid, {drop_count} dropped ({drop_rate:.2f}%)")
+        # Log RealSense statistics
+        for cam_name, valid_count in realsense_valid_counts.items():
+            drop_count = total_realsense_frames - valid_count
+            drop_rate = (drop_count / max(total_realsense_frames, 1)) * 100
+            self.logger.info(f"  RealSense {cam_name}: {valid_count}/{total_realsense_frames} valid, {drop_count} dropped ({drop_rate:.2f}%)")
+        
+        # Log IMX415 statistics
+        for cam_name, valid_count in imx415_valid_counts.items():
+            drop_count = total_imx415_frames - valid_count
+            drop_rate = (drop_count / max(total_imx415_frames, 1)) * 100
+            self.logger.info(f"  {cam_name}: {valid_count}/{total_imx415_frames} valid, {drop_count} dropped ({drop_rate:.2f}%)")
         
         # Save MP4 videos for each camera
         self._save_camera_videos()
     
     def _save_camera_videos(self):
         """Save camera images as MP4 videos for each camera"""
-        if len(self.camera_timestamps) == 0:
+        has_realsense = self.num_realsense_cameras > 0 and len(self.camera_timestamps) > 0
+        has_imx415 = self.num_imx415_cameras > 0 and len(self.camera_imx415_timestamps) > 0
+        
+        if not has_realsense and not has_imx415:
             self.logger.warn("No camera frames to save as video")
             return
         
         # Get video properties
         fps = self._camera_fps
-        height, width = self.image_shape[:2]
         
         # Try different codecs in order of preference
         codecs_to_try = [('avc1', 'H.264'), ('mp4v', 'MPEG-4'), ('XVID', 'Xvid')]
@@ -431,90 +628,113 @@ class TrajectoryRecorder:
         
         self.logger.info(f"Saving camera videos at {fps} fps...")
         
-        # Save each camera as separate MP4
-        for i in range(self.num_cameras):
-            cam_name = f'cam{i+1}'
-            video_path = f"{base_path}_{cam_name}.mp4"
+        # Save RealSense cameras as MP4
+        if has_realsense:
+            realsense_height, realsense_width = self.realsense_image_shape[:2]
+            for i in range(self.num_realsense_cameras):
+                cam_name = f'cam{i+1}'
+                video_path = f"{base_path}_realsense_{cam_name}.mp4"
+                
+                self._save_single_camera_video(
+                    cam_name, video_path, fps, realsense_width, realsense_height,
+                    self.camera_images_list[cam_name], self.camera_valid_list[cam_name],
+                    "RealSense"
+                )
+        
+        # Save IMX415 cameras as MP4
+        if has_imx415:
+            imx415_height, imx415_width = self.imx415_image_shape[:2]
+            for i in range(self.num_imx415_cameras):
+                cam_name = f'imx415_cam{i+1}'
+                video_path = f"{base_path}_{cam_name}.mp4"
+                
+                self._save_single_camera_video(
+                    cam_name, video_path, fps, imx415_width, imx415_height,
+                    self.camera_imx415_list[cam_name], self.camera_imx415_valid_list[cam_name],
+                    "IMX415"
+                )
+    
+    def _save_single_camera_video(self, cam_name, video_path, fps, width, height, images, valid_mask, camera_type):
+        """Save a single camera's images as MP4 video"""
+        # Try different codecs in order of preference
+        codecs_to_try = [('avc1', 'H.264'), ('mp4v', 'MPEG-4'), ('XVID', 'Xvid')]
+        
+        video_writer = None
+        success = False
+        
+        try:
+            if len(images) == 0:
+                self.logger.warn(f"{camera_type} {cam_name}: No frames to save")
+                return
             
-            video_writer = None
-            success = False
-            
-            try:
-                images = self.camera_images_list[cam_name]
-                valid_mask = self.camera_valid_list[cam_name]
+            # Try different codecs until one works
+            for codec_code, codec_name in codecs_to_try:
+                fourcc = cv2.VideoWriter_fourcc(*codec_code)
+                video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
                 
-                if len(images) == 0:
-                    self.logger.warn(f"{cam_name}: No frames to save")
-                    continue
-                
-                # Try different codecs until one works
-                for codec_code, codec_name in codecs_to_try:
-                    fourcc = cv2.VideoWriter_fourcc(*codec_code)
-                    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
-                    
-                    if video_writer.isOpened():
-                        self.logger.info(f"  {cam_name}: Using {codec_name} codec")
-                        success = True
-                        break
-                    else:
-                        video_writer.release()
-                
-                if not success:
-                    self.logger.error(f"  {cam_name}: Failed to create video writer with any codec")
-                    continue
-                
-                # Write frames
-                frames_written = 0
-                for frame_idx, (image, is_valid) in enumerate(zip(images, valid_mask)):
-                    # Ensure image is uint8
-                    if image.dtype != np.uint8:
-                        image = image.astype(np.uint8)
-                    
-                    # IMX415 returns BGR format (from OpenCV), no conversion needed
-                    bgr_image = image.copy()
-                    
-                    # Add red border for invalid frames (dropped frames)
-                    if not is_valid:
-                        border_thickness = 10
-                        cv2.rectangle(bgr_image, 
-                                    (0, 0), 
-                                    (width-1, height-1), 
-                                    (0, 0, 255), 
-                                    border_thickness)
-                        # Add text
-                        cv2.putText(bgr_image, "DROPPED FRAME", 
-                                  (width//2 - 150, height//2), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 
-                                  1.5, (0, 0, 255), 3)
-                    
-                    # Ensure correct shape (H, W, 3)
-                    if len(bgr_image.shape) != 3 or bgr_image.shape[2] != 3:
-                        self.logger.warn(f"  {cam_name}: Frame {frame_idx} has invalid shape {bgr_image.shape}, skipping")
-                        continue
-                    
-                    video_writer.write(bgr_image)
-                    frames_written += 1
-                
-                video_writer.release()
-                
-                # Verify file was created
-                if os.path.exists(video_path):
-                    file_size = os.path.getsize(video_path)
-                    if file_size > 1000:  # At least 1KB
-                        valid_count = sum(valid_mask)
-                        self.logger.info(f"  {cam_name}: Saved {frames_written} frames ({valid_count} valid) to {video_path} ({file_size/1024/1024:.2f} MB)")
-                    else:
-                        self.logger.error(f"  {cam_name}: Video file is too small ({file_size} bytes), may be corrupted")
+                if video_writer.isOpened():
+                    self.logger.info(f"  {camera_type} {cam_name}: Using {codec_name} codec")
+                    success = True
+                    break
                 else:
-                    self.logger.error(f"  {cam_name}: Video file was not created")
-                
-            except Exception as e:
-                self.logger.error(f"  {cam_name}: Error saving video: {str(e)}")
-                import traceback
-                traceback.print_exc()
-            finally:
-                if video_writer is not None:
                     video_writer.release()
+            
+            if not success:
+                self.logger.error(f"  {camera_type} {cam_name}: Failed to create video writer with any codec")
+                return
+            
+            # Write frames
+            frames_written = 0
+            for frame_idx, (image, is_valid) in enumerate(zip(images, valid_mask)):
+                # Ensure image is uint8
+                if image.dtype != np.uint8:
+                    image = image.astype(np.uint8)
+                
+                # Camera returns BGR format, no conversion needed
+                bgr_image = image.copy()
+                
+                # Add red border for invalid frames (dropped frames)
+                if not is_valid:
+                    border_thickness = 10
+                    cv2.rectangle(bgr_image, 
+                                (0, 0), 
+                                (width-1, height-1), 
+                                (0, 0, 255), 
+                                border_thickness)
+                    # Add text
+                    cv2.putText(bgr_image, "DROPPED FRAME", 
+                              (width//2 - 150, height//2), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 
+                              1.5, (0, 0, 255), 3)
+                
+                # Ensure correct shape (H, W, 3)
+                if len(bgr_image.shape) != 3 or bgr_image.shape[2] != 3:
+                    self.logger.warn(f"  {camera_type} {cam_name}: Frame {frame_idx} has invalid shape {bgr_image.shape}, skipping")
+                    continue
+                
+                video_writer.write(bgr_image)
+                frames_written += 1
+            
+            video_writer.release()
+            
+            # Verify file was created
+            if os.path.exists(video_path):
+                file_size = os.path.getsize(video_path)
+                if file_size > 1000:  # At least 1KB
+                    valid_count = sum(valid_mask)
+                    self.logger.info(f"  {camera_type} {cam_name}: Saved {frames_written} frames ({valid_count} valid) to {video_path} ({file_size/1024/1024:.2f} MB)")
+                else:
+                    self.logger.error(f"  {camera_type} {cam_name}: Video file is too small ({file_size} bytes), may be corrupted")
+            else:
+                self.logger.error(f"  {camera_type} {cam_name}: Video file was not created")
+            
+        except Exception as e:
+            self.logger.error(f"  {camera_type} {cam_name}: Error saving video: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if video_writer is not None:
+                video_writer.release()
 
 def get_cur_pose(robot, gripper):
     """Get current robot and gripper pose"""
@@ -525,7 +745,7 @@ def get_cur_pose(robot, gripper):
     gripper_states = gripper.states()
     return robot_states, current_tcp_pos, current_tcp_quat, gripper_states
 
-def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False, device_paths=None):
+def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False, device_paths=None, enable_realsense=True, enable_imx415=True):
     """Main function for teleoperation with recording"""
     logger = spdlog.ConsoleLogger("Main")
     logger.info("This script combines Quest VR controller teleoperation with simultaneous robot trajectory recording.")
@@ -535,16 +755,37 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = os.path.join(path, f"trajectory_{timestamp}.h5")
     
-    # Initialize IMX415CameraConfig
-    camera_config = IMX415CameraConfig(
-        real_time_view=True,
-        image_size=(rgb_width, rgb_height),
-        fps=fps,
-        save_freq=frequency,
-        device_paths=device_paths
-    )
+    # Initialize camera configurations
+    imx415_config = None
+    realsense_config = None
     
-    recorder = TrajectoryRecorder(output_file, camera_config)
+    if enable_imx415:
+        # Initialize IMX415CameraConfig
+        imx415_config = IMX415CameraConfig(
+            real_time_view=True,
+            image_size=(rgb_width, rgb_height),
+            fps=fps,
+            save_freq=frequency,
+            device_paths=device_paths
+        )
+        logger.info(f"IMX415 camera enabled: {device_paths if device_paths else 'default device'}")
+    
+    if enable_realsense:
+        # Initialize RealSense CameraConfig
+        realsense_config = CameraConfig(
+            real_time_view=True,
+            rgb_size=(rgb_width, rgb_height),
+            depth_size=(rgb_width, rgb_height),
+            fps=fps,
+            save_freq=frequency
+        )
+        logger.info("RealSense camera enabled")
+    
+    if not enable_realsense and not enable_imx415:
+        logger.error("At least one camera type must be enabled!")
+        return
+    
+    recorder = TrajectoryRecorder(output_file, imx415_config, realsense_config)
 
     # Initialize Gello controller
     config_path = './flexiv_demo.yaml'
@@ -668,21 +909,37 @@ def main(task, path, frequency, rgb_width=640, rgb_height=480, fps=30, gui=False
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Teleoperation with trajectory recording")
+    parser = argparse.ArgumentParser(description="Dual camera teleoperation with trajectory recording")
 
     current_date = datetime.now().strftime("%Y-%m-%d")
     default_path = f"../data/flexiv/teleop_recordings/{current_date}/"
     parser.add_argument("--path", type=str, default=default_path, help="Path to save HDF5 files")
     parser.add_argument("--frequency", type=int, default=30, help="Record frequency")
     parser.add_argument("--task", type=str, default="debug", help="Task name")
-    parser.add_argument("--rgb_width", type=int, default=1920, help="RGB image width")
-    parser.add_argument("--rgb_height", type=int, default=1080, help="RGB image height")
+    parser.add_argument("--rgb_width", type=int, default=1280, help="RGB image width")
+    parser.add_argument("--rgb_height", type=int, default=720, help="RGB image height")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second")
     parser.add_argument("--GUI", type=bool, default=False, help="Enable pybullet GUI")
+    
+    # Camera options
     parser.add_argument("--device-paths", type=str, nargs='+', 
-                       help="摄像头设备路径列表，如 /dev/video0 /dev/video1。如不指定则使用 /dev/video0")
+                       help="IMX415摄像头设备路径列表，如 /dev/video12 /dev/video13")
+    parser.add_argument("--enable-realsense", action='store_true', default=True,
+                       help="启用RealSense相机 (默认启用)")
+    parser.add_argument("--disable-realsense", action='store_true', 
+                       help="禁用RealSense相机")
+    parser.add_argument("--enable-imx415", action='store_true', default=True,
+                       help="启用IMX415相机 (默认启用)")
+    parser.add_argument("--disable-imx415", action='store_true',
+                       help="禁用IMX415相机")
 
     args = parser.parse_args()
+    
+    # Handle camera enable/disable flags
+    enable_realsense = args.enable_realsense and not args.disable_realsense
+    enable_imx415 = args.enable_imx415 and not args.disable_imx415
+    
     main(task=args.task, path=args.path, frequency=args.frequency, 
          rgb_width=args.rgb_width, rgb_height=args.rgb_height, fps=args.fps, gui=args.GUI,
-         device_paths=getattr(args, 'device_paths', None))
+         device_paths=getattr(args, 'device_paths', None),
+         enable_realsense=enable_realsense, enable_imx415=enable_imx415)
